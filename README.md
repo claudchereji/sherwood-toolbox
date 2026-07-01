@@ -44,6 +44,22 @@ sudo apt-get install -f   # if dependencies are missing
 
 Launch **Sherwood Toolbox** from your application menu.
 
+### AppImage (Fedora, Arch, and other distros)
+
+Download `Sherwood_Toolbox-*.AppImage`, make it executable and run:
+
+```bash
+chmod +x Sherwood_Toolbox-*.AppImage
+./Sherwood_Toolbox-*.AppImage
+```
+
+On Fedora 43 (especially with AMD Ryzen graphics) you also need:
+```bash
+sudo dnf install webkit2gtk4.1 python3-gobject
+```
+
+The AppImage includes the native pywebview desktop shell and Fedora/AMD workarounds.
+
 ### Portable tarball (works on most Linux distributions)
 
 ```bash

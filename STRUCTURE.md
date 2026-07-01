@@ -8,12 +8,16 @@ blueprint per tool, run locally on `127.0.0.1`.
 
 - **Development / browser mode:** `run/standalone.py` serves on a fixed port and
   opens the system browser.
-- **Production desktop mode (`.deb`):** `run/desktop.py` serves the same Flask
-  app inside a native pywebview window. The `.deb` wrapper launches this.
-- **Install the `.deb`:** `run/build-deb.sh` produces
-  `sherwood-toolbox_<version>_amd64.deb`; install it with `sudo dpkg -i ...`.
-- **Launch:** the GNOME / freedesktop "Sherwood Toolbox" entry, or the
-  `sherwood-toolbox` command.
+- **Production desktop mode (`.deb` or AppImage):** `run/desktop.py` serves the
+  same Flask app inside a native pywebview window (GTK/WebKitGTK). The `.deb`
+  wrapper and the AppImage both launch this.
+- **Build the `.deb`:** `run/build-deb.sh` produces
+  `sherwood-toolbox_<version>_amd64.deb`.
+- **Build the AppImage (Fedora/Arch/portable):** `run/build-appimage.sh` produces
+  `Sherwood_Toolbox-<version>-x86_64.AppImage`. On Fedora 43 + AMD it requires
+  `python3-gobject` + `webkit2gtk4.1` at build time and runtime.
+- **Launch:** GNOME app grid ("Sherwood Toolbox"), `sherwood-toolbox` command,
+  or double-click the AppImage.
 - **Dev loop:** edit a file, restart the launcher (no build step for
   templates/CSS). Python code changes need a process restart.
 

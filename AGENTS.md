@@ -6,9 +6,12 @@ should start with `README.md` (if present) and `STRUCTURE.md`.
 ## Project overview
 
 A local-only Flask application that bundles several estimating tools under one
-hub. It is distributed as a `.deb` package that runs the app inside a native
-pywebview desktop window, or as a portable tarball that runs in the system
-browser.
+hub. It is distributed as:
+- a `.deb` package (native pywebview desktop shell on Debian/Ubuntu-based distros)
+- an AppImage (portable, recommended for Fedora 43+, Arch, and other distros)
+- a portable tarball (browser mode)
+
+The desktop builds use pywebview 5+ with GTK/WebKitGTK.
 
 - **Language / framework:** Python 3.9+, Flask 3+, Waitress, pywebview 5+
 - **UI:** Server-rendered Jinja2 templates, minimal vanilla JS, shared CSS in
@@ -39,6 +42,21 @@ Open the URL it prints.
 ```
 
 Produces `sherwood-toolbox_<version>_amd64.deb`.
+
+### Build the AppImage (portable, for Fedora/Arch/etc.)
+
+```bash
+./run/build-appimage.sh
+```
+
+Produces `Sherwood_Toolbox-<version>-x86_64.AppImage`.
+
+**On Fedora 43 + AMD (common case):**
+```bash
+sudo dnf install python3-gobject webkit2gtk4.1 fuse
+```
+
+The resulting AppImage embeds Fedora/AMD workarounds (disables dmabuf/compositing, forces X11) and the native pywebview desktop shell.
 
 ### Install / upgrade the `.deb`
 
@@ -128,8 +146,14 @@ To release:
 After changes that affect the desktop shell, packaging, or CRM:
 - [ ] `./run/build-deb.sh` completes without errors.
 - [ ] `sudo dpkg -i sherwood-toolbox_*.deb` installs cleanly.
-- [ ] Launching `sherwood-toolbox` opens the desktop window.
+- [ ] `./run/build-appimage.sh` completes without errors (and passes its Fedora/AMD pre-flight).
+- [ ] `Sherwood_Toolbox-*.AppImage` is produced and is executable.
+- [ ] Launching `sherwood-toolbox` (or the AppImage) opens the desktop window.
 - [ ] Estimate Enhancer downloads show a Save As dialog.
 - [ ] Documents / Photo Report panels tint when the company dropdown changes.
 - [ ] CRM Fetch populates customer, claim, address, and Job/ID fields.
+
+For AppImage + Fedora 43 + AMD specifically:
+- [ ] On a Fedora 43 machine (or the Ubuntu CI runner): build succeeds with `python3-gobject` + `webkit2gtk4.1` (or equivalent `gir1.2-webkit2-4.1`) present.
+- [ ] On AMD Ryzen iGPU hardware the AppImage starts without a black window (workarounds in AppRun are active).
 

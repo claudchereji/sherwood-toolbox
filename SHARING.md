@@ -45,7 +45,62 @@ The desktop launcher runs inside a native pywebview window on port `8766`
 **Code Docs** and **Archive** buttons that open the attachments and uploads
 folders.
 
-## Option B: Portable tarball
+## Option B: AppImage (recommended for Fedora, Arch, and other non-.deb distros)
+
+### 1. Build the AppImage
+
+```bash
+cd /path/to/sherwood-toolbox
+./run/build-appimage.sh
+```
+
+This produces `Sherwood_Toolbox-<version>-x86_64.AppImage` in the project root.
+
+**Build-time requirements** (especially on Fedora 43 + AMD):
+```bash
+# Fedora 43 / recent Fedora
+sudo dnf install python3-gobject webkit2gtk4.1 fuse
+
+# Debian/Ubuntu builders
+sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1 fuse
+```
+
+### 2. Runtime requirements on the target machine
+
+The AppImage bundles its own Python and most libraries, but still needs the
+system WebKitGTK + PyGObject bindings because it uses the native GTK backend:
+
+```bash
+# Fedora 43 (AMD Ryzen iGPUs are common here)
+sudo dnf install webkit2gtk4.1 python3-gobject
+```
+
+### 3. Run it
+
+```bash
+chmod +x Sherwood_Toolbox-*.AppImage
+./Sherwood_Toolbox-*.AppImage
+```
+
+The AppImage launches the native pywebview desktop shell. On AMD hardware
+(Ryzen 6000/7000/8000 series iGPUs) it automatically sets these workarounds
+to avoid black/blank windows and dmabuf crashes:
+
+- `WEBKIT_DISABLE_COMPOSITING_MODE=1`
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1`
+- `GDK_BACKEND=x11`
+
+If you still get a black window, try:
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 ./Sherwood_Toolbox-*.AppImage
+```
+
+### 4. Updates
+
+Rebuild the AppImage on the source machine and copy the new `.AppImage` over.
+No install step is required on the target.
+
+## Option C: Portable tarball
 
 ### 1. Build the bundle
 
@@ -84,7 +139,7 @@ idempotent; re-run it any time.
 - Terminal: `sherwood-toolbox` (open a new shell first, or `source ~/.zshrc`)
 
 The tarball installer launches the app in a browser window. For the pywebview
- desktop shell, use the `.deb` instead.
+desktop shell, use the `.deb` or AppImage instead.
 
 ## CRM setup on the new machine
 
