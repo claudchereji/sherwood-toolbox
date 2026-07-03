@@ -93,6 +93,14 @@ ENV TOOLBOX_DATA_DIR=/data \
     TOOLBOX_UPLOAD_DIR=/data/uploads \
     TOOLBOX_ATTACHMENTS_DIR=/data/attachments
 
+# Notes on "attachments":
+# - Packaged IRC reference PDFs live inside the image at
+#   toolbox/tools/estimate_enhancer/attachments/ (read-only).
+#   These are offered in the Estimate Enhancer "Attach Documents" step.
+# - The writable "Code Docs" folder for the sidebar file manager (employee
+#   upload/delete) is TOOLBOX_ATTACHMENTS_DIR. On startup the app silently
+#   seeds the packaged PDFs into this dir (idempotent, never overwrites user files).
+
 EXPOSE 8777
 
 # Use waitress by default (simple). Swap to gunicorn if you prefer.
@@ -186,6 +194,7 @@ These were encountered during the first production web deployment:
   ```
 - **Dashboard / other site certs broke** — Because the deploy touched the shared host nginx and DNS for the old dashboard name (`dashboard.vanguardadj.com`) still pointed at a different IP returning a `*.cloudwaysapps.com` cert. Always verify DNS for every public name after changes. Re-assert the exact site file + cert paths for any other domain you care about.
 - **Data directory ownership** — The container runs as uid 1000 (`toolbox`). Bind-mount paths created as root/ubuntu will cause permission errors. Do `chown -R 1000:1000 /path/to/data`.
+  The writable Code Docs folder (sidebar file manager for employees) lives under `TOOLBOX_ATTACHMENTS_DIR` (e.g. `/data/attachments`). On first start the app silently seeds the packaged IRC reference PDFs into this directory (idempotent — never overwrites user files).
 - **Dockerfile from release tag** — `v0.3.0` tag used `pip install --no-deps` and a minimal slim image. Real deploy required patching to `pip install -e .` + adding PyMuPDF runtime libs (libgl1, libglib2.0-0, libx11-6, libxext6, libxrender1, libsm6).
 - **AppImage** — CI build can succeed but the resulting `.AppImage` may not start on the target machine (especially Fedora/AMD). Test launch of the artifact, not just that the build script finishes. Common mitigations: FUSE present, `LIBGL_ALWAYS_SOFTWARE=1`, forcing X11.
 

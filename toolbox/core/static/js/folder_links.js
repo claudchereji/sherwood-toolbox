@@ -136,9 +136,9 @@
           window.__openFileManager(key);
           return;
         }
-        // Fallback to old behavior
+        // Fallback to old behavior (paths are best-effort strings for the alert)
         var path = (key === "code_docs")
-          ? "/opt/sherwood-toolbox/toolbox/tools/estimate_enhancer/attachments/"
+          ? "~/.local/share/sherwood-toolbox/attachments/"
           : "~/.local/share/sherwood-toolbox/uploads/";
         if (window.pywebview && window.pywebview.api) {
           var method = key === "code_docs" ? "open_code_docs" : "open_archive";

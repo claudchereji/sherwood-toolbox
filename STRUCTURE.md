@@ -14,8 +14,10 @@ blueprint per tool, run locally on `127.0.0.1`.
 - **Build the `.deb`:** `run/build-deb.sh` produces
   `sherwood-toolbox_<version>_amd64.deb`.
 - **Build the AppImage (Fedora/Arch/portable):** `run/build-appimage.sh` produces
-  `Sherwood_Toolbox-<version>-x86_64.AppImage`. On Fedora 43 + AMD it requires
-  `python3-gobject` + `webkit2gtk4.1` at build time and runtime.
+  `Sherwood_Toolbox-<version>-x86_64.AppImage` (fat GTK-bundled via linuxdeploy + gtk plugin).
+  WebKitGTK + GTK + gi are bundled from the build host. Leaves `AppDir` and writes
+  `BUILD_INFO.txt` + `.buildinfo`. Runtime on targets only needs FUSE (or `--appimage-extract-and-run`)
+  plus basic graphics; the AMD workarounds remain in AppRun. GitHub CI remains thin (Ubuntu 22.04).
 - **Launch:** GNOME app grid ("Sherwood Toolbox"), `sherwood-toolbox` command,
   or double-click the AppImage.
 - **Dev loop:** edit a file, restart the launcher (no build step for
@@ -57,7 +59,8 @@ blueprint per tool, run locally on `127.0.0.1`.
 | `toolbox/tools/estimate_enhancer/pdf_ops.py` | Pure PDF analysis/enhancement logic (PyMuPDF). Section banners inside. | Change how estimates are analyzed or enhanced. |
 | `toolbox/tools/estimate_enhancer/routes.py` | Routes, config wiring, the fork subprocess. | Change endpoints or file handling. |
 | `toolbox/tools/estimate_enhancer/fork/add_image_links.py` | The bundled image-link helper run as a subprocess. | Change image-linking behavior. |
-| `toolbox/tools/estimate_enhancer/attachments/` | Packaged IRC reference PDFs offered for attachment. | Add/remove reference documents. |
+| `toolbox/tools/estimate_enhancer/attachments/` | Packaged IRC reference PDFs (read-only). Offered in Estimate Enhancer "Attach Documents". | Add/remove packaged reference PDFs. |
+| `TOOLBOX_ATTACHMENTS_DIR` (default `~/.local/share/sherwood-toolbox/attachments`) | Writable "Code Docs" for the sidebar file manager (employees). Packaged PDFs are auto-seeded here on first use. | Employee-managed reference PDFs. |
 | `toolbox/tools/estimate_enhancer/templates/estimate_enhancer.html` + `static/css/ee.css` | The 4-step flow UI, highlight term controls, and download handler. | Change the EstimateEnhancer UI. |
 | `toolbox/tools/photo_report/routes.py` + `templates/photo_report.html` | Photo report form -> `restoration_common.PhotoReportPDF`. | Change inputs or wiring. The PDF layout is in restoration_common. |
 | `toolbox/tools/documents/routes.py` + `templates/documents.html` | Invoice + certificate forms -> `restoration_common` generators; line items, signature. | Change inputs or wiring. The PDF layouts are in restoration_common. |

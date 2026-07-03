@@ -46,12 +46,42 @@ def _save_web_limits(limits):
         pass
 
 # Allowed dirs for file manager (popouts from sidebar buttons)
-CODE_DOCS_DIR = Path(__file__).resolve().parent.parent / "tools" / "estimate_enhancer" / "attachments"
+# Code Docs now uses the configurable writable location (TOOLBOX_ATTACHMENTS_DIR / Config.ATTACHMENTS_DIR).
+# Packaged IRC references remain in toolbox/tools/estimate_enhancer/attachments (read-only for Enhancer).
 ARCHIVE_DIR = Config.UPLOAD_DIR
+
+def _ensure_code_docs_seeded():
+    """Silently copy packaged IRC reference PDFs into the writable Code Docs dir if missing.
+    Idempotent: never overwrites user-added files. Best-effort, no output."""
+    target = Path(Config.ATTACHMENTS_DIR)
+    target.mkdir(parents=True, exist_ok=True)
+    src = None
+    try:
+        # Import inside the function to avoid any import-time cycles.
+        # enhancer.routes only imports _load_web_limits from this module.
+        from ..tools.estimate_enhancer.routes import ATTACHMENTS_DIR as _pkg_src
+        src = Path(_pkg_src)
+    except Exception:
+        # Fallback to the location relative to this file (works in source tree and installed packages).
+        src = Path(__file__).resolve().parent.parent / "tools" / "estimate_enhancer" / "attachments"
+    if not src or not src.exists():
+        return
+    try:
+        import shutil
+        for pdf in sorted(src.glob("*.pdf")):
+            dst = target / pdf.name
+            if not dst.exists():
+                shutil.copy2(pdf, dst)
+    except Exception:
+        pass  # silent best effort
+
+# Public alias for startup seeding (called from app.py after ensure_dirs).
+ensure_code_docs_seeded = _ensure_code_docs_seeded
 
 def _resolve_dir(key):
     if key == "code_docs":
-        d = CODE_DOCS_DIR
+        _ensure_code_docs_seeded()
+        d = Path(Config.ATTACHMENTS_DIR)
     elif key == "archive":
         d = ARCHIVE_DIR
     else:

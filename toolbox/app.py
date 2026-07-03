@@ -35,6 +35,12 @@ def create_app(config=Config):
     app = create_flask_app()
     app.config.from_object(config)
     config.ensure_dirs()
+    # Seed packaged IRC references into the writable Code Docs dir (idempotent + silent).
+    # This runs on every launch (desktop, standalone, web) so the file manager has the expected docs.
+    try:
+        hub.ensure_code_docs_seeded()
+    except Exception:
+        pass  # never break startup
 
     app.register_blueprint(hub.bp)
     for tool in TOOLS:

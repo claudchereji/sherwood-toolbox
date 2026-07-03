@@ -112,10 +112,11 @@ class ToolboxApi:
             dialog.destroy()
 
     def open_code_docs(self):
-        """Open the Estimate Enhancer code-reference attachments folder."""
+        """Open the Code Docs folder (writable Code Docs location)."""
         import subprocess
+        from toolbox.config import Config
 
-        path = Path(__file__).resolve().parent.parent / "toolbox" / "tools" / "estimate_enhancer" / "attachments"
+        path = Path(Config.ATTACHMENTS_DIR)
         path.mkdir(parents=True, exist_ok=True)
         subprocess.run(["xdg-open", str(path)])
         return {"ok": True}

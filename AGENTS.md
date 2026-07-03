@@ -49,14 +49,24 @@ Produces `sherwood-toolbox_<version>_amd64.deb`.
 ./run/build-appimage.sh
 ```
 
-Produces `Sherwood_Toolbox-<version>-x86_64.AppImage`.
+Produces `Sherwood_Toolbox-<version>-x86_64.AppImage` (fat GTK-bundled) and leaves `AppDir` for inspection.
 
-**On Fedora 43 + AMD (common case):**
+This is now a **fat** AppImage: a clean temp venv + `linuxdeploy` + `linuxdeploy-plugin-gtk` bundles WebKitGTK + GTK + gi from the build host. A `BUILD_INFO.txt` (inside) and `.buildinfo` sidecar record Python + WebKitGTK versions at build time. The post-build step hard-fails if the bundled Python cannot `import gi; gi.require_version("WebKit2","4.1")`.
+
+**Build-time (Zorin/Fedora 43 + AMD):**
 ```bash
-sudo dnf install python3-gobject webkit2gtk4.1 fuse
+# Ubuntu/Zorin
+sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1 fuse \
+                 pkgconf libgtk-3-dev libgirepository1.0-dev \
+                 librsvg2-dev libcairo2-dev
+
+# Fedora 43
+sudo dnf install python3-gobject webkit2gtk4.1 fuse \
+                 pkgconf gtk3-devel gobject-introspection-devel \
+                 librsvg2-devel cairo-devel
 ```
 
-The resulting AppImage embeds Fedora/AMD workarounds (disables dmabuf/compositing, forces X11) and the native pywebview desktop shell.
+Runtime on targets is now minimal (FUSE or `--appimage-extract-and-run`; basic graphics). The AppRun still applies AMD workarounds. `LIBGL_ALWAYS_SOFTWARE=1` remains the documented last resort for black windows. GitHub CI is unchanged (still thin Ubuntu 22.04 image).
 
 ### Install / upgrade the `.deb`
 
@@ -130,9 +140,16 @@ Documents and Photo Report panels carry the `company-theme-surface` class; their
 generate buttons carry `company-tinted`.
 
 ### Sidebar folder buttons
-**Code Docs** opens `/opt/sherwood-toolbox/toolbox/tools/estimate_enhancer/attachments/`.
+**Code Docs** (employees) opens the writable Code Docs location
+(`TOOLBOX_ATTACHMENTS_DIR` / `Config.ATTACHMENTS_DIR`). On first use the app
+silently seeds the packaged IRC reference PDFs into this directory (idempotent).
 **Archive** opens `~/.local/share/sherwood-toolbox/uploads/`. In a browser, the
 buttons show an alert with those paths instead.
+
+The packaged IRC reference PDFs (used by Estimate Enhancer "Attach Documents")
+live inside the package/image at
+`toolbox/tools/estimate_enhancer/attachments/` (read-only). They are not the
+target for the file manager.
 
 ### Icons
 - `toolbox/core/static/img/logo.png` — Sherwood brand logo in the sidebar.
@@ -160,13 +177,14 @@ After changes that affect the desktop shell, packaging, or CRM:
 - [ ] `./run/build-deb.sh` completes without errors.
 - [ ] `sudo dpkg -i sherwood-toolbox_*.deb` installs cleanly.
 - [ ] `./run/build-appimage.sh` completes without errors (and passes its Fedora/AMD pre-flight).
-- [ ] `Sherwood_Toolbox-*.AppImage` is produced and is executable.
+- [ ] `Sherwood_Toolbox-*.AppImage` is produced and is executable (fat GTK bundle, ~80+ MB).
 - [ ] Launching `sherwood-toolbox` (or the AppImage) opens the desktop window.
+- [ ] Post-build verification prints "PASSED (bundled gi + WebKit2 import OK)".
+- [ ] `BUILD_INFO.txt` inside the image (and `.buildinfo` sidecar) show the build host Python + WebKitGTK versions.
+- [ ] `AppDir` is left behind for inspection.
 - [ ] Estimate Enhancer downloads show a Save As dialog.
 - [ ] Documents / Photo Report panels tint when the company dropdown changes.
 - [ ] CRM Fetch populates customer, claim, address, and Job/ID fields.
-
-**CRITICAL:** After editing any .py files you MUST restart the server (Ctrl+C then relaunch). waitress is started with use_reloader=False and does not pick up Python changes at runtime. Templates/CSS/JS usually update without restart (still do a hard refresh in the browser).
 
 ### Web + auth + limits testing checklist
 - [ ] With `TOOLBOX_WEB_MODE=1`, unauthenticated requests redirect to `/login`.
@@ -186,4 +204,6 @@ After changes that affect the desktop shell, packaging, or CRM:
 For AppImage + Fedora 43 + AMD specifically:
 - [ ] On a Fedora 43 machine (or the Ubuntu CI runner): build succeeds with `python3-gobject` + `webkit2gtk4.1` (or equivalent `gir1.2-webkit2-4.1`) present.
 - [ ] On AMD Ryzen iGPU hardware the AppImage starts without a black window (workarounds in AppRun are active).
+
+**CRITICAL:** After editing any .py files you MUST restart the server (Ctrl+C then relaunch). waitress is started with use_reloader=False and does not pick up Python changes at runtime. Templates/CSS/JS usually update without restart (still do a hard refresh in the browser).
 
