@@ -42,6 +42,14 @@
   border: 1px solid var(--line); border-radius: 8px; background: #fff;
   padding: 9px 10px; font-size: 0.84rem; max-width: 100%;
 }
+.rec-doc-select optgroup {
+  font-weight: 700; font-style: normal; color: var(--green-800);
+  background: var(--sage-50);
+}
+.rec-doc-select option {
+  padding: 6px 8px; color: var(--ink); background: #fff;
+  border-bottom: 1px solid var(--sage-100);
+}
 .rec-slot input[type="file"] {
   border: 1px dashed var(--line); border-radius: 8px;
   background: var(--sage-50); padding: 9px; font-size: 0.82rem;

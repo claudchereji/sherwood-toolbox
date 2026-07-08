@@ -152,16 +152,27 @@
       const d = await (await fetch(CRM.files, { method: 'POST', body: fd })).json();
       if (!d.ok) { $('crmStatus').textContent = d.error; return; }
       if (!d.files.length) { $('crmStatus').textContent = 'This deal has no PDF documents.'; return; }
-      SLOTS.forEach(slot => {
-        const sel = $('sel_' + slot);
-        sel.innerHTML = '<option value="">— choose a document —</option>';
-        d.files.forEach(f => {
+      const estimates = d.files.filter(f => f.is_estimate);
+      const others = d.files.filter(f => !f.is_estimate);
+      function addGroup(sel, label, arr) {
+        if (!arr.length) return;
+        const og = document.createElement('optgroup');
+        og.label = '---- ' + label + ' ----';
+        arr.forEach(f => {
           const o = document.createElement('option');
           o.value = f.id; o.dataset.name = f.title;
-          o.textContent = (f.is_estimate ? '★ ' : ' ') + f.title + '  (' + f.size + ')';
-          sel.appendChild(o);
+          const meta = [f.size, f.updated].filter(Boolean).join('  ·  ');
+          o.textContent = f.title + (meta ? '   —   ' + meta : '');
+          og.appendChild(o);
         });
-        sel.value = d.guess[slot] ? String(d.guess[slot]) : '';
+        sel.appendChild(og);
+      }
+      SLOTS.forEach(slot => {
+        const sel = $('sel_' + slot);
+        sel.innerHTML = '<option value="">Choose a document...</option>';
+        addGroup(sel, 'Estimates', estimates);
+        addGroup(sel, 'Other documents', others);
+        sel.value = d.guess[slot] ? String(d.guess[slot]) : '' ;
         sel.style.display = '';
         $(slot === 'carrier' ? 'carrierInput' : slot === 'contractor' ? 'contractorInput' : 'ogInput').value = '';
       });
