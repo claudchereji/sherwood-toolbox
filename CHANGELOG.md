@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Estimate Reconciler** tool: upload a carrier estimate and a contractor Xactimate estimate for the same claim; the tool lists the line items and Overhead & Profit the carrier omits and reconciles the RCV gap with an exact bridge, with downloadable `.md`/`.csv` reports. The engine (parse, match, reconcile, report) is ported from the standalone reconciler.
+- Tesseract OCR support as an **optional** dependency for image-only (scanned) estimates. When Tesseract is absent, the Reconciler shows a clear message and continues without crashing.
+
+### Changed
+- The Reconciler reads PDF text and OCR through PyMuPDF (`fitz`) only, removing any poppler/`pdftotext` dependency. Its layout-preserving extraction reproduces the standalone CLI's figures to the cent.
+
 ## [0.2.0] - 2026-06-30
 
 ### Added

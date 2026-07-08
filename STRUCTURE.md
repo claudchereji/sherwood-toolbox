@@ -60,6 +60,9 @@ blueprint per tool, run locally on `127.0.0.1`.
 | `toolbox/tools/estimate_enhancer/templates/estimate_enhancer.html` + `static/css/ee.css` | The 4-step flow UI, highlight term controls, and download handler. | Change the EstimateEnhancer UI. |
 | `toolbox/tools/photo_report/routes.py` + `templates/photo_report.html` | Photo report form -> `restoration_common.PhotoReportPDF`. | Change inputs or wiring. The PDF layout is in restoration_common. |
 | `toolbox/tools/documents/routes.py` + `templates/documents.html` | Invoice + certificate forms -> `restoration_common` generators; line items, signature. | Change inputs or wiring. The PDF layouts are in restoration_common. |
+| `toolbox/tools/reconciler/{extract,match,reconcile,report,playbook}.py` | The estimate-comparison engine (ported unchanged from the standalone reconciler). `extract.py` reads PDF text and OCR via PyMuPDF only. | Change parsing (`extract.py`), matching (`match.py`), the RCV bridge (`reconcile.py`), or report output (`report.py`). |
+| `toolbox/tools/reconciler/routes.py` + `templates/reconciler.html` + `static/css/reconciler.css` | Two-file upload, `POST /run` -> reconcile -> JSON + `.md`/`.csv`, download route. | Change the Reconciler endpoints or UI. |
+| `toolbox/tools/reconciler/playbook.json` | Pre-built checklist of commonly-added items mined from the contractor corpus (bundled package data). | Rebuild with `python -m` on the standalone corpus if the corpus changes. |
 
 ## Bundled library (in this repo)
 

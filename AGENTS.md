@@ -93,6 +93,11 @@ See `STRUCTURE.md` for a full path-by-path reference.
 - The vendored `restoration_common` package has its canonical source at
   `~/.local/share/RestorationToolkit`. If you change it here, keep the copies in
   sync.
+- Tesseract OCR is an **optional** runtime dependency, used only by the Estimate
+  Reconciler for image-only PDFs. It is not in `pyproject.toml`. When present,
+  scanned estimates are OCR'd (flagged low confidence); when absent, the tool
+  shows a degrade message and continues. No tool shells out to poppler; the
+  Reconciler extracts PDF text and OCR through PyMuPDF (`fitz`) only.
 
 ## Known fixes and behaviors
 
