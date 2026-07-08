@@ -662,6 +662,47 @@ def _ocr(path: str) -> str:
     return "\n".join(parts)
 
 
+# --------------------------------------------------------------------------- #
+# Secondary structures and coverage sublimits
+# --------------------------------------------------------------------------- #
+
+# A dwelling-extension / other-structures sublimit covers structures apart from
+# the main dwelling (a barn, shed, detached garage, pole building...) under a
+# separate, smaller limit. Classify a line item to that structure by its section
+# name, or by materials that appear only on such a building.
+EXT_SECTION = re.compile(
+    r"barn|shed|garage|out\s*building|pole|machine shed|silo|coop|detached|"
+    r"carport|stable|arena|grain|corn crib|\bshop\b", re.I)
+EXT_DESC = re.compile(
+    r"metal roof|ribbed|wall/roof panel|r-?panel|corrugated|purlin|closure strip|"
+    r"metal building|pole barn", re.I)
+
+
+def is_extension_item(section: str, description: str) -> bool:
+    """True when a line item belongs to a secondary structure a dwelling-extension
+    / other-structures sublimit covers, rather than the main dwelling."""
+    return bool(EXT_SECTION.search(section or "") or EXT_DESC.search(description or ""))
+
+
+# A separate, smaller coverage the estimate carves out: State Farm's "Dwelling
+# Extension", an ISO "Other Structures" / "Coverage B". Its presence means part of
+# the loss is capped by a limit distinct from the main dwelling limit.
+SUBLIMIT_COVERAGE = re.compile(r"(Dwelling Extension|Other Structures|Coverage\s+B\b)", re.I)
+
+
+def detect_sublimit_coverages(text: str) -> list:
+    """Distinct sublimit-coverage names the estimate prints (deduped, canonical)."""
+    seen, out = set(), []
+    for m in SUBLIMIT_COVERAGE.finditer(text):
+        s = re.sub(r"\s+", " ", m.group(1).strip())
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s.title() if s.isupper() or s.islower() else s)
+    return out[:3]
+
+
 @dataclass
 class Estimate:
     path: str
@@ -683,6 +724,7 @@ class Estimate:
     confidence: str = "high"       # 'high' | 'medium' | 'low'
     image_only: bool = False       # native text layer was empty (a scan)
     statements: list = field(default_factory=list)  # quoted coverage limitations
+    sublimit_coverages: list = field(default_factory=list)  # dwelling extension / other structures
 
     def to_dict(self):
         d = asdict(self)
@@ -731,6 +773,7 @@ def extract_estimate(path: str, role: str) -> Estimate:
         confidence=conf,
         image_only=image_only,
         statements=extract_statements(text),
+        sublimit_coverages=detect_sublimit_coverages(text),
     )
 
 

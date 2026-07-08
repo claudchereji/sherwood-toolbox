@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .extract import infer_themes
+from .extract import infer_themes, is_extension_item
 from .match import match_line_items
 
 
@@ -237,6 +237,100 @@ def derive_hypotheses(carrier_statements, missing):
 
 
 # --------------------------------------------------------------------------- #
+# Coverage-sublimit hypothesis (a reason more approvals may not help)
+# --------------------------------------------------------------------------- #
+
+def _structure_split(items):
+    """Sum RCV and depreciation over the main dwelling vs any secondary structure
+    (barn, shed, detached garage...) a dwelling-extension sublimit would cap."""
+    dwl_rcv = ext_rcv = dwl_dep = ext_dep = 0.0
+    for it in items:
+        if is_extension_item(it.section, it.description):
+            ext_rcv += it.rcv
+            ext_dep += it.deprec
+        else:
+            dwl_rcv += it.rcv
+            dwl_dep += it.deprec
+    return {"dwl_rcv": round(dwl_rcv, 2), "ext_rcv": round(ext_rcv, 2),
+            "dwl_dep": round(dwl_dep, 2), "ext_dep": round(ext_dep, 2)}
+
+
+def _money0(x):
+    return f"${x:,.0f}"
+
+
+def coverage_limit_hypothesis(carrier, contractor, missing, og=None):
+    """Predict when a dwelling-extension / other-structures sublimit may cap the
+    payout, so pushing for more approvals on the secondary structure does not help
+    (and can hurt) the homeowner. Mathematically grounded on the structure split
+    and, when the original estimate is present, the divergent approval rate.
+
+    Returns a DenialHypothesis or None. Never asserts the limit (it lives on the
+    declarations, not the estimate); it is always a labelled inference to verify.
+    """
+    ext_missing = [m for m in missing
+                   if is_extension_item(getattr(m, "section", ""), m.description)]
+    cs = _structure_split(carrier.items)
+    xs = _structure_split(contractor.items)
+    # Outstanding on the secondary structure from the structure RCV split (the
+    # grand-total-style figure), not the noisier per-line sum: contractor scope on
+    # that structure less what the carrier already carries there.
+    ext_outstanding = round(max(0.0, xs["ext_rcv"] - cs["ext_rcv"]), 2)
+    has_sublimit = bool(carrier.sublimit_coverages)
+    has_ext = cs["ext_rcv"] > 0 or xs["ext_rcv"] > 0
+    if not has_ext and not has_sublimit:
+        return None
+
+    # Divergent approval rate on the secondary structure (needs the original).
+    frozen = False
+    rate_note = ""
+    if og is not None:
+        os_ = _structure_split(og.items)
+        ext_ask = xs["ext_rcv"] - os_["ext_rcv"]
+        ext_appr = cs["ext_rcv"] - os_["ext_rcv"]
+        dwl_ask = xs["dwl_rcv"] - os_["dwl_rcv"]
+        dwl_appr = cs["dwl_rcv"] - os_["dwl_rcv"]
+        ext_rate = ext_appr / ext_ask if ext_ask > 50 else None
+        dwl_rate = dwl_appr / dwl_ask if dwl_ask > 50 else None
+        if ext_rate is not None and ext_rate < 0.25 and \
+                (dwl_rate is None or dwl_rate - ext_rate >= 0.20):
+            frozen = True
+            rate_note = (
+                f"The carrier approved "
+                f"{(dwl_rate * 100):.0f}% of your dwelling ask but "
+                f"{(ext_rate * 100):.0f}% of your secondary-structure ask "
+                f"({_money0(ext_appr)} of {_money0(ext_ask)}); its secondary-structure "
+                f"total has not moved from the original estimate. ")
+
+    # Gate: only raise this when there is real exposure or a clear frozen signal.
+    if not frozen and ext_outstanding < 1500:
+        return None
+
+    sub = carrier.sublimit_coverages[0] if has_sublimit else ""
+    cap_phrase = (f"the {sub} coverage" if sub else
+                  "a dwelling-extension / other-structures sublimit")
+    note = (
+        rate_note +
+        f"That structure is capped by {cap_phrase}, a separate limit (commonly around "
+        f"10% of the Coverage A dwelling limit), and carries {_money0(cs['ext_dep'])} of "
+        f"depreciation held back until the work is completed. {_money0(ext_outstanding)} "
+        f"of your outstanding scope sits on it. If that sublimit is already reached, "
+        f"added scope there is not recoverable: the payout does not rise, held-back "
+        f"depreciation above the limit is lost, and the settlement can move to ACV, "
+        f"lowering the net returned to the homeowner. Confirm the remaining sublimit "
+        f"before pursuing this scope.")
+
+    label = ("Sublimit likely reached - verify" if frozen else
+             "Possible sublimit - verify")
+    return DenialHypothesis(
+        theme="COVERAGE_LIMIT", basis="inference", label=label,
+        statement=(f"Estimate carries a separate {sub} coverage." if sub else ""),
+        item_numbers=[m.number for m in ext_missing],
+        item_descriptions=[m.description for m in ext_missing],
+        dollars=ext_outstanding, note=note)
+
+
+# --------------------------------------------------------------------------- #
 # Reconciled mode
 # --------------------------------------------------------------------------- #
 
@@ -292,6 +386,10 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
     est = round(max(0.0, bridge["total_gap"]), 2)
 
     hypotheses = derive_hypotheses(carrier.statements, missing)
+    # Lead with the coverage-sublimit caution when present (two-file signal only).
+    clh = coverage_limit_hypothesis(carrier, contractor, sugg, og=None)
+    if clh:
+        hypotheses.insert(0, clh)
 
     r = Recon(
         claimant=claimant, mode="reconciled", carrier_name=carrier.name,
@@ -347,6 +445,14 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     # Approved wins: current-carrier line items not present in the original.
     _, approved_wins, _ = match_line_items(og.items, carrier.items)
     r.approved_wins = approved_wins
+
+    # Recompute the sublimit hypothesis with the original estimate so the divergent
+    # approval-rate signal (a frozen secondary structure) can be measured.
+    r.hypotheses = [h for h in r.hypotheses if h.theme != "COVERAGE_LIMIT"]
+    outstanding = [s for s in r.suggestions if s.status == "MISSING"]
+    clh = coverage_limit_hypothesis(carrier, contractor, outstanding, og=og)
+    if clh:
+        r.hypotheses.insert(0, clh)
 
     r.notes.insert(0, "effectiveness is measured from grand totals (reliable to "
                       "the cent); the per-item lists use line matching and may not "

@@ -104,7 +104,8 @@ _STATEMENT_LABELS = {
     "POLICY_EXCLUSION": "Policy exclusions",
 }
 _THEME_TITLES = {"MATCHING": "Matching", "CODE": "Code / ordinance",
-                 "UNEXPLAINED": "No stated reason"}
+                 "UNEXPLAINED": "No stated reason",
+                 "COVERAGE_LIMIT": "Coverage sublimit"}
 
 
 def _statements_md(recon):

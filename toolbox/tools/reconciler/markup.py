@@ -53,6 +53,10 @@ ADD_BG = (0.90, 0.96, 0.90)
 # measured line (warm) and from outstanding scope (green).
 WON = (0.13, 0.40, 0.70)
 
+# Warning accent for the coverage-sublimit caution.
+WARN = (0.54, 0.29, 0.09)
+WARN_BG = (0.98, 0.94, 0.86)
+
 # Severity of a quantity shortfall, keyed by its dollar size (contractor unit
 # price x the quantity the carrier is short). The band fill is drawn translucent
 # so the line item reads through it. Thresholds are set so only a large dollar
@@ -531,6 +535,31 @@ def _totals3(c, labels, values):
     c.row(values, [third] * 3, font="hebo", size=12, color=GREEN)
 
 
+def _sublimit_caution(c, recon):
+    """A prominent amber caution when a coverage sublimit may cap further gains."""
+    h = next((x for x in recon.hypotheses if x.theme == "COVERAGE_LIMIT"), None)
+    if not h:
+        return
+    body = (f"{_money(h.dollars)} of your outstanding scope is on a structure a coverage "
+            f"sublimit caps separately. Getting more approved there may not raise the "
+            f"payout, and can lower the net returned to the homeowner. See the "
+            f'"Coverage sublimit" hypothesis at the back before pursuing it.')
+    inner = PAGE_W - 2 * MARGIN - 24
+    lines = c._wrapped_lines(body, "helv", 9, inner)
+    box_h = 20 + lines * 11 + 8
+    c.space(box_h + 6)
+    top = c.y
+    c.page.draw_rect(fitz.Rect(MARGIN, top, PAGE_W - MARGIN, top + box_h),
+                     color=None, fill=WARN_BG, fill_opacity=1.0)
+    c.page.draw_line(fitz.Point(MARGIN, top), fitz.Point(MARGIN, top + box_h),
+                     color=WARN, width=3)
+    c.page.insert_text(fitz.Point(MARGIN + 12, top + 14), f"CAUTION - {h.label.upper()}",
+                       fontname="hebo", fontsize=8.5, color=WARN)
+    c.y = top + 20
+    c.text(body, size=9, x=MARGIN + 12, width=inner, color=INK, gap=0)
+    c.y = top + box_h + 10
+
+
 def _summary_effectiveness(c, recon, flagged, missing, located_count, painted_count,
                            won_count):
     c.heading(f"Approval effectiveness - {recon.claimant}", size=17)
@@ -541,6 +570,8 @@ def _summary_effectiveness(c, recon, flagged, missing, located_count, painted_co
     pct = f"{recon.effectiveness * 100:.0f}%"
     _headline_box(c, "APPROVAL EFFECTIVENESS", pct,
                   f"of your {_money(recon.ask_dollars)} supplement approved so far")
+
+    _sublimit_caution(c, recon)
 
     _totals3(c, ["Won to date (original -> current)", "Still outstanding",
                  "Your supplement (ask)"],
@@ -660,7 +691,8 @@ _STATEMENT_LABELS = {
     "POLICY_EXCLUSION": "Policy exclusions",
 }
 _THEME_TITLES = {"MATCHING": "Matching", "CODE": "Code / ordinance",
-                 "UNEXPLAINED": "No stated reason"}
+                 "UNEXPLAINED": "No stated reason",
+                 "COVERAGE_LIMIT": "Coverage sublimit"}
 
 
 def _detail_pages(doc, recon, flagged, missing, page_of):
