@@ -18,11 +18,19 @@ import time
 
 try:
     from restoration_common import crm_login, load_crm_credentials
-    from restoration_common.paths import CRM_BASE_URL
+    try:
+        from restoration_common.paths import CRM_BASE_URL
+    except ImportError:
+        # Older restoration_common exposes only CRM_LOGIN_URL ("<base>/Auth.aspx").
+        from restoration_common.paths import CRM_LOGIN_URL
+        CRM_BASE_URL = CRM_LOGIN_URL.rsplit("/", 1)[0]
     _HAVE_CRM = True
 except Exception:                       # restoration_common absent in some builds
     _HAVE_CRM = False
     CRM_BASE_URL = "https://office.publicadjustermidwest.com"
+
+import os as _os
+CRM_BASE_URL = _os.environ.get("TOOLBOX_CRM_BASE_URL", CRM_BASE_URL)
 
 API = CRM_BASE_URL.rstrip("/") + "/api/2.0"
 FILEHANDLER = CRM_BASE_URL.rstrip("/") + "/Products/Files/HttpHandlers/filehandler.ashx"
