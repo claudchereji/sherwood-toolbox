@@ -48,6 +48,7 @@ TOOLS = [
     ToolSpec("documents", "Documents", _IC_DOCS, "/documents",
              "Generate invoices and certificates of completion.", True, True),
     ToolSpec("reconciler", "Estimate Reconciler", _IC_REC, "/reconciler",
-             "Compare a carrier estimate to a contractor estimate: missing scope, "
-             "O&P, and the RCV gap.", True, True),
+             "Mark up a carrier estimate against a contractor estimate: missing "
+             "scope and quantity gaps highlighted on the PDF, with a logged "
+             "breakdown.", True, True),
 ]

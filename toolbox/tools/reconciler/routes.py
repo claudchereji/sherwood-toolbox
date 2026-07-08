@@ -1,23 +1,25 @@
-"""HTTP layer for the Estimate Reconciler. Holds the blueprint, wires the upload
-directory from toolbox config, and calls the pure engine (extract -> reconcile ->
-report). Edit routes here; edit comparison behavior in reconcile.py / match.py;
-edit PDF text extraction in extract.py.
+"""HTTP layer for the Estimate Reconciler (visual-estimating flow). Holds the
+blueprint, wires the upload directory from toolbox config, and calls the pure
+engine (extract -> reconcile -> mark up + log). Edit routes here; edit comparison
+behavior in reconcile.py / match.py; edit PDF text extraction in extract.py; edit
+the carrier markup in markup.py; edit what is logged in logbook.py.
 
-Modeled on estimate_enhancer/routes.py: uploads land in Config.UPLOAD_DIR, the
-generated .md/.csv are served once and deleted, and nothing is stored permanently.
+Unlike the original report flow, the found data is not returned for on-screen
+tables: it is written to a persistent per-run log (logbook), and the difference is
+painted onto the carrier PDF (markup). The response carries only the headline
+figures, the counts, and the download link for that marked-up PDF. Raw uploads are
+still deleted after parsing; only the derived log persists.
 """
 import os
-from dataclasses import asdict
 from pathlib import Path
 
 from flask import Blueprint, jsonify, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
 from ...config import Config
-from . import match, playbook as playbook_mod
+from . import logbook, markup, match, playbook as playbook_mod
 from .extract import extract_estimate
 from .reconcile import reconcile_matched
-from .report import write_report
 
 bp = Blueprint(
     "reconciler",
@@ -39,6 +41,15 @@ except Exception:
 # === SECTION: helpers ===
 def _upload_dir():
     d = Path(Config.UPLOAD_DIR)
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+def _log_dir():
+    """Where the persistent reconciliation logs live. Separate from the transient
+    upload dir so the marked-up PDF can be served once and deleted while the log
+    stays."""
+    d = Path(Config.DATA_DIR) / "reconciler-logs"
     d.mkdir(parents=True, exist_ok=True)
     return str(d)
 
@@ -138,10 +149,10 @@ def run():
         carrier = extract_estimate(carrier_path, "carrier")
         contractor = extract_estimate(contractor_path, "contractor")
 
-        # Source PDFs are no longer needed once parsed; keep no permanent storage.
-        cleanup_file(carrier_path)
+        # The contractor PDF is parsed and no longer needed; the carrier PDF is
+        # kept until it has been marked up.
         cleanup_file(contractor_path)
-        carrier_path = contractor_path = None
+        contractor_path = None
 
         if not carrier.items and carrier.grand_rcv == 0 and \
                 not contractor.items and contractor.grand_rcv == 0:
@@ -152,36 +163,43 @@ def run():
         claimant = _claimant_from(contractor.name, carrier.name)
         recon = reconcile_matched(carrier, contractor, claimant, PLAYBOOK)
 
-        md_path, csv_path = write_report(recon, _upload_dir())
+        # Paint the difference onto the carrier estimate: the primary deliverable.
+        markup_name = f"{claimant}-carrier-markup.pdf"
+        markup_path = os.path.join(_upload_dir(), markup_name)
+        stats = markup.mark_up_carrier(carrier_path, recon, markup_path)
 
-        missing = [{
-            "number": s.number,       # line number in the contractor estimate
-            "category": s.category,
-            "description": s.description,
-            "quantity": s.quantity,
-            "unit": s.unit,
-            "rcv": s.dollars,          # RCV as printed in the contractor estimate
-        } for s in recon.suggestions if s.status == "MISSING"]
+        # Carrier PDF has served its purpose; keep no raw upload.
+        cleanup_file(carrier_path)
+        carrier_path = None
 
+        scanned_warning = _scan_warning(carrier, contractor)
+        swap_hint = _swap_hint(carrier, contractor)
+
+        # Log the found data instead of returning it for on-screen tables.
+        log_paths = logbook.log_reconciliation(
+            recon, _log_dir(), markup_stats=stats,
+            sides={"carrier": _side(carrier), "contractor": _side(contractor)},
+            warnings=[scanned_warning, swap_hint])
+
+        n_missing = sum(1 for s in recon.suggestions if s.status == "MISSING")
         return jsonify({
             "claimant": recon.claimant,
             "gap": round(recon.contractor_grand - recon.carrier_grand, 2),
             "est_recoverable": recon.est_recoverable,
-            "missing": missing,
-            "shared": [asdict(s) for s in recon.shared],
-            "carrier_statements": recon.carrier_statements,
-            "denial_hypotheses": [asdict(h) for h in recon.hypotheses],
-            "notes": recon.notes,
             "carrier": _side(carrier),
             "contractor": _side(contractor),
-            "scanned_warning": _scan_warning(carrier, contractor),
-            "swap_hint": _swap_hint(carrier, contractor),
-            "downloads": {
-                "md": url_for("reconciler.download_file",
-                              name=os.path.basename(md_path)),
-                "csv": url_for("reconciler.download_file",
-                               name=os.path.basename(csv_path)),
+            "counts": {
+                "missing": n_missing,
+                "missing_dollars": stats.get("missing_dollars", 0.0),
+                "flagged": stats.get("flagged", 0),
+                "located": stats.get("located", 0),
+                "added_pages": stats.get("added_pages", 0),
             },
+            "notes": recon.notes,
+            "scanned_warning": scanned_warning,
+            "swap_hint": swap_hint,
+            "markup_download": url_for("reconciler.download_file", name=markup_name),
+            "log_path": log_paths["md"],
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -192,9 +210,11 @@ def run():
 
 @bp.route("/download/<name>")
 def download_file(name):
-    """Serve a generated .md/.csv report once, then delete it."""
+    """Serve a generated file from the upload dir once, then delete it. The
+    marked-up carrier PDF is the deliverable; the .md/.csv paths remain valid for
+    any caller that still requests them."""
     safe = secure_filename(name)
-    if not safe or not safe.lower().endswith((".md", ".csv")):
+    if not safe or not safe.lower().endswith((".pdf", ".md", ".csv")):
         return "File not found", 404
     filepath = os.path.join(_upload_dir(), safe)
     if os.path.exists(filepath):

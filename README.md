@@ -26,7 +26,7 @@ All processing happens locally on your machine. Uploaded files stay on your syst
   Create invoices and certificates of completion, with CRM auto-fill, line items, signatures, and company branding.
 
 - **Estimate Reconciler**  
-  Upload a carrier insurance estimate and a contractor Xactimate estimate for the same claim. The tool lists the line items and Overhead & Profit the carrier omits and reconciles the Replacement Cost Value (RCV) gap between the two files with an exact bridge, with downloadable `.md` and `.csv` reports.
+  Upload a carrier insurance estimate and a contractor Xactimate estimate for the same claim. The tool marks up the carrier PDF: a summary page with the Replacement Cost Value (RCV) gap and estimated recoverable, the line items the contractor measured higher highlighted in place and colored by how large the dollar gap is, and the missing scope and Overhead & Profit listed by category on appended pages. The full line-by-line breakdown, the RCV bridge, and the carrier's quoted coverage statements are written to a per-run log on the machine rather than shown on screen.
 
 ## Features
 

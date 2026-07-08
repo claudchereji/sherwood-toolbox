@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Estimate Reconciler - Sherwood Toolbox{% endblock %}
 {% block page_title %}Estimate Reconciler{% endblock %}
-{% block page_subtitle %}Compare a carrier estimate to a contractor estimate{% endblock %}
+{% block page_subtitle %}Mark up a carrier estimate against a contractor estimate{% endblock %}
 {% block extra_head %}
   <link rel="stylesheet" href="{{ url_for('reconciler.static', filename='css/reconciler.css') }}">
 {% endblock %}
@@ -11,7 +11,7 @@
 
   <div class="panel">
     <p class="panel-label">Upload the two estimates</p>
-    <p class="muted-note">Provide the carrier insurance estimate and the contractor Xactimate estimate for the same claim. The tool lists the line items the carrier omits and breaks down the shared items. PDFs are read locally and deleted after the report is built.</p>
+    <p class="muted-note">Provide the carrier insurance estimate and the contractor Xactimate estimate for the same claim. The tool marks up the carrier PDF in place: a summary page up front, missing scope listed by category, and every line item the contractor measured higher highlighted on the page and colored by how large the dollar gap is. The full line-by-line breakdown is written to a log rather than shown here. Uploaded PDFs are read locally and deleted once the markup is built.</p>
     <form id="recForm" enctype="multipart/form-data">
       <div class="rec-inputs">
         <div class="rec-input">
@@ -23,13 +23,13 @@
           <input type="file" id="contractorInput" name="contractor" accept=".pdf" required>
         </div>
       </div>
-      <button type="submit" class="btn btn-primary" id="runBtn">Reconcile</button>
+      <button type="submit" class="btn btn-primary" id="runBtn">Mark up carrier estimate</button>
     </form>
   </div>
 
   <div id="loading" class="loading" style="display:none;">
     <div class="spinner-border" role="status"></div>
-    <p id="loadingText">Reading PDFs and reconciling...</p>
+    <p id="loadingText">Reading PDFs, reconciling, and marking up the carrier estimate...</p>
   </div>
 
   <div id="results" style="display:none;">
@@ -53,56 +53,33 @@
 
     <div id="alerts"></div>
 
-    <div class="panel" id="hypothesesPanel" style="display:none;">
-      <p class="panel-label">Denial hypotheses <span class="panel-count" id="hypCount"></span></p>
-      <p class="muted-note">Why scope may be missing. A green <strong>Quoted exclusion</strong> badge is backed by the carrier's own words; an amber <strong>Inference</strong> badge is a guess to verify with the carrier.</p>
-      <div id="hypothesesBody"></div>
-    </div>
-
-    <div class="panel" id="statementsPanel" style="display:none;">
-      <p class="panel-label">Carrier coverage statements</p>
-      <p class="muted-note">Quoted verbatim from the carrier estimate.</p>
-      <div id="statementsBody"></div>
-    </div>
-
-    <div class="panel">
-      <p class="panel-label">Missing line items <span class="panel-count" id="missingCount"></span></p>
-      <p class="muted-note">In the contractor scope, absent from the carrier estimate. Grouped by category, largest RCV first. RCV is the value printed in the contractor estimate.</p>
-      <div class="rec-table-wrap">
-        <table class="lineitems" id="missingTable">
-          <thead><tr><th class="num">#</th><th>Item</th><th class="num">Qty</th><th>Unit</th><th class="num">RCV (from estimate)</th></tr></thead>
-          <tbody></tbody>
-        </table>
+    <div class="panel rec-markup">
+      <p class="panel-label">Marked-up carrier estimate</p>
+      <p class="muted-note">The difference is painted onto the carrier PDF. A summary page leads, then the carrier's own pages with the under-measured line items highlighted in place, then the missing scope listed by category. Open the summary page first.</p>
+      <div class="rec-markup-stats">
+        <div class="rec-stat">
+          <span class="rec-stat-num" id="stMissing">0</span>
+          <span class="rec-stat-lbl">missing line items</span>
+          <span class="rec-stat-sub" id="stMissingDollars"></span>
+        </div>
+        <div class="rec-stat">
+          <span class="rec-stat-num" id="stFlagged">0</span>
+          <span class="rec-stat-lbl">quantity gaps flagged</span>
+          <span class="rec-stat-sub" id="stLocated"></span>
+        </div>
+        <div class="rec-stat">
+          <span class="rec-stat-num" id="stPages">0</span>
+          <span class="rec-stat-lbl">summary pages added</span>
+        </div>
       </div>
-    </div>
-
-    <div class="panel" id="sharedPanel">
-      <p class="panel-label">Shared items <span class="panel-count" id="sharedCount"></span></p>
-      <p class="muted-note">Line items both estimates carry, with the quantity and price difference. A positive delta means the contractor is higher.</p>
-      <div class="rec-table-wrap">
-        <table class="lineitems" id="sharedTable">
-          <thead><tr>
-            <th class="num">Carrier #</th><th class="num">Contr. #</th>
-            <th>Category</th><th>Item</th>
-            <th class="num">Carrier qty</th><th class="num">Contr. qty</th><th class="num">&Delta; qty</th>
-            <th class="num">Carrier $/u</th><th class="num">Contr. $/u</th><th class="num">&Delta; $/u</th>
-            <th class="num">Carrier RCV</th><th class="num">Contr. RCV</th><th class="num">&Delta; RCV</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="panel rec-downloads">
-      <p class="panel-label">Download the report</p>
-      <button class="btn btn-secondary" id="dlMd">Markdown report (.md)</button>
-      <button class="btn btn-secondary" id="dlCsv">Line-item diff (.csv)</button>
+      <button class="btn btn-primary" id="dlMarkup">Download marked-up carrier estimate (PDF)</button>
+      <p class="rec-log-note" id="logNote"></p>
     </div>
 
   </div>
 </div>
 
-<p class="note">Estimates are read locally and deleted after the report is produced; no uploaded content is retained. Figures are an aid to review, not a guarantee of coverage. Sherwood Estimates &copy; 2026.</p>
+<p class="note">Uploaded estimates are read locally and deleted once the markup is built. The line-by-line breakdown is written to a log on this machine; the marked-up PDF is served once and then removed. Figures are an aid to review, not a guarantee of coverage. Sherwood Estimates &copy; 2026.</p>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -115,72 +92,8 @@
     const s = Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     return (v < 0 ? '-$' : '$') + s;
   }
-  function signedMoney(x) {
-    const v = Number(x || 0);
-    return (v >= 0 ? '+' : '-') + '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  }
-  function num(x) {
-    const v = Number(x || 0);
-    return v.toLocaleString('en-US', {maximumFractionDigits: 2});
-  }
-  function signedNum(x) {
-    const v = Number(x || 0);
-    return (v >= 0 ? '+' : '') + num(v);
-  }
-  function cell(text, cls) {
-    const td = document.createElement('td');
-    if (cls) td.className = cls;
-    td.textContent = text;
-    return td;
-  }
-  function el(tag, cls, text) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
-    return e;
-  }
-
-  const STMT_LABELS = {
-    MATCHING: 'Matching exclusion',
-    DEPRECIATION_ACV: 'Depreciation / actual cash value',
-    ORDINANCE_CODE: 'Ordinance or law / code',
-    POLICY_EXCLUSION: 'Policy exclusions',
-  };
-  const THEME_TITLES = { MATCHING: 'Matching', CODE: 'Code / ordinance', UNEXPLAINED: 'No stated reason' };
-
-  function buildStatements(statements) {
-    const panel = $('statementsPanel'), body = $('statementsBody');
-    body.innerHTML = '';
-    if (!statements || !statements.length) { panel.style.display = 'none'; return; }
-    panel.style.display = '';
-    const byKind = {};
-    statements.forEach(s => { (byKind[s.kind] = byKind[s.kind] || []).push(s.text); });
-    Object.keys(byKind).forEach(kind => {
-      body.appendChild(el('p', 'rec-stmt-kind', STMT_LABELS[kind] || kind));
-      byKind[kind].slice(0, 5).forEach(t => body.appendChild(el('blockquote', 'rec-quote', t)));
-      if (byKind[kind].length > 5) body.appendChild(el('p', 'rec-stmt-more', '+' + (byKind[kind].length - 5) + ' more'));
-    });
-  }
-
-  function buildHypotheses(hyps) {
-    const panel = $('hypothesesPanel'), body = $('hypothesesBody');
-    body.innerHTML = '';
-    if (!hyps || !hyps.length) { panel.style.display = 'none'; return; }
-    panel.style.display = '';
-    $('hypCount').textContent = '(' + hyps.length + ')';
-    hyps.forEach(h => {
-      const card = el('div', 'rec-hyp');
-      const head = el('div', 'rec-hyp-head');
-      head.appendChild(el('span', 'rec-badge ' + (h.basis === 'quoted' ? 'rec-badge-quoted' : 'rec-badge-infer'), h.label));
-      head.appendChild(el('span', 'rec-hyp-title', THEME_TITLES[h.theme] || h.theme));
-      head.appendChild(el('span', 'rec-hyp-dollars', money(h.dollars)));
-      card.appendChild(head);
-      card.appendChild(el('p', 'rec-hyp-note', h.note));
-      if (h.statement) card.appendChild(el('blockquote', 'rec-quote', h.statement));
-      const nums = (h.item_numbers || []).map(n => '#' + n).join(', ');
-      card.appendChild(el('p', 'rec-hyp-items', 'Contractor line items: ' + nums));
-      body.appendChild(card);
-    });
+  function count(x) {
+    return Number(x || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
   }
 
   function alertBox(kind, text) {
@@ -189,79 +102,6 @@
     d.textContent = text;
     return d;
   }
-
-  function buildMissing(missing) {
-    const tb = $('missingTable').querySelector('tbody');
-    tb.innerHTML = '';
-    $('missingCount').textContent = missing.length ? '(' + missing.length + ')' : '';
-    if (!missing.length) {
-      const tr = document.createElement('tr');
-      const td = cell('No missing line items detected.', 'rec-empty');
-      td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr);
-      return;
-    }
-    // backend returns items pre-sorted by (category, -rcv); insert a header +
-    // subtotal row whenever the category changes.
-    let cat = null, catTotal = 0, headerCell = null;
-    function flush() {
-      if (headerCell) headerCell.textContent = cat + '  ·  ' + money(catTotal);
-    }
-    missing.forEach(m => {
-      if (m.category !== cat) {
-        flush();
-        cat = m.category; catTotal = 0;
-        const htr = document.createElement('tr');
-        htr.className = 'rec-cat-head';
-        headerCell = document.createElement('td');
-        headerCell.colSpan = 5;
-        htr.appendChild(headerCell);
-        tb.appendChild(htr);
-      }
-      catTotal += Number(m.rcv || 0);
-      const tr = document.createElement('tr');
-      tr.appendChild(cell(m.number || '', 'num'));
-      tr.appendChild(cell(m.description));
-      tr.appendChild(cell(num(m.quantity), 'num'));
-      tr.appendChild(cell(m.unit));
-      tr.appendChild(cell(money(m.rcv), 'num'));
-      tb.appendChild(tr);
-    });
-    flush();
-  }
-
-  function buildShared(shared) {
-    const panel = $('sharedPanel'), tb = $('sharedTable').querySelector('tbody');
-    tb.innerHTML = '';
-    $('sharedCount').textContent = shared.length ? '(' + shared.length + ')' : '';
-    if (!shared.length) {
-      const tr = document.createElement('tr');
-      const td = cell('No shared line items matched between the two estimates.', 'rec-empty');
-      td.colSpan = 13; tr.appendChild(td); tb.appendChild(tr);
-      return;
-    }
-    shared.forEach(s => {
-      const tr = document.createElement('tr');
-      tr.appendChild(cell(s.carrier_number || '', 'num'));
-      tr.appendChild(cell(s.contractor_number || '', 'num'));
-      tr.appendChild(cell(s.category));
-      tr.appendChild(cell(s.description));
-      tr.appendChild(cell(num(s.carrier_quantity), 'num'));
-      tr.appendChild(cell(num(s.contractor_quantity), 'num'));
-      tr.appendChild(cell(signedNum(s.quantity_delta), 'num ' + deltaCls(s.quantity_delta)));
-      tr.appendChild(cell(money(s.carrier_unit_price), 'num'));
-      tr.appendChild(cell(money(s.contractor_unit_price), 'num'));
-      tr.appendChild(cell(signedMoney(s.price_delta), 'num ' + deltaCls(s.price_delta)));
-      tr.appendChild(cell(money(s.carrier_rcv), 'num'));
-      tr.appendChild(cell(money(s.contractor_rcv), 'num'));
-      tr.appendChild(cell(signedMoney(s.rcv_delta), 'num ' + deltaCls(s.rcv_delta)));
-      tb.appendChild(tr);
-    });
-  }
-  function deltaCls(x) {
-    const v = Number(x || 0);
-    return v > 0 ? 'rec-up' : (v < 0 ? 'rec-down' : '');
-  }
-
   function buildAlerts(data) {
     const box = $('alerts');
     box.innerHTML = '';
@@ -320,13 +160,16 @@
       $('carrierOp').checked = !!data.carrier.has_op;
       $('contractorOp').checked = !!data.contractor.has_op;
 
-      buildMissing(data.missing || []);
-      buildShared(data.shared || []);
-      buildHypotheses(data.denial_hypotheses || []);
-      buildStatements(data.carrier_statements || []);
+      const c = data.counts || {};
+      $('stMissing').textContent = count(c.missing);
+      $('stMissingDollars').textContent = c.missing_dollars ? money(c.missing_dollars) + ' in scope' : '';
+      $('stFlagged').textContent = count(c.flagged);
+      $('stLocated').textContent = c.flagged ? (count(c.located) + ' of ' + count(c.flagged) + ' highlighted in place') : 'none under-measured';
+      $('stPages').textContent = count(c.added_pages);
+      $('logNote').textContent = data.log_path ? ('Full line-by-line breakdown logged to ' + data.log_path) : '';
+
       buildAlerts(data);
-      wireDownload($('dlMd'), data.downloads.md);
-      wireDownload($('dlCsv'), data.downloads.csv);
+      wireDownload($('dlMarkup'), data.markup_download);
 
       $('results').style.display = 'block';
     } catch (err) {
