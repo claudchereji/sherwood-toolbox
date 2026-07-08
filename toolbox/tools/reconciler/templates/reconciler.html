@@ -162,7 +162,9 @@
 
       const c = data.counts || {};
       $('stMissing').textContent = count(c.missing);
-      $('stMissingDollars').textContent = c.missing_dollars ? money(c.missing_dollars) + ' in scope' : '';
+      $('stMissingDollars').textContent = c.missing_dollars
+        ? money(c.missing_dollars) + ' in scope, ' + count(c.missing_painted) + ' painted in place'
+        : '';
       $('stFlagged').textContent = count(c.flagged);
       $('stLocated').textContent = c.flagged ? (count(c.located) + ' of ' + count(c.flagged) + ' highlighted in place') : 'none under-measured';
       $('stPages').textContent = count(c.added_pages);

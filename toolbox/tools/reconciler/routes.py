@@ -166,7 +166,7 @@ def run():
         # Paint the difference onto the carrier estimate: the primary deliverable.
         markup_name = f"{claimant}-carrier-markup.pdf"
         markup_path = os.path.join(_upload_dir(), markup_name)
-        stats = markup.mark_up_carrier(carrier_path, recon, markup_path)
+        stats = markup.mark_up_carrier(carrier, recon, markup_path)
 
         # Carrier PDF has served its purpose; keep no raw upload.
         cleanup_file(carrier_path)
@@ -191,6 +191,7 @@ def run():
             "counts": {
                 "missing": n_missing,
                 "missing_dollars": stats.get("missing_dollars", 0.0),
+                "missing_painted": stats.get("missing_painted", 0),
                 "flagged": stats.get("flagged", 0),
                 "located": stats.get("located", 0),
                 "added_pages": stats.get("added_pages", 0),
