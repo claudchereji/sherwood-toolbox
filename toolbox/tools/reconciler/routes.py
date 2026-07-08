@@ -19,7 +19,7 @@ from werkzeug.utils import secure_filename
 from ...config import Config
 from . import logbook, markup, match, playbook as playbook_mod
 from .extract import extract_estimate
-from .reconcile import reconcile_matched
+from .reconcile import reconcile_effectiveness, reconcile_matched
 
 bp = Blueprint(
     "reconciler",
@@ -138,21 +138,24 @@ def index():
 
 @bp.route("/run", methods=["POST"])
 def run():
-    carrier_path = contractor_path = None
+    carrier_path = contractor_path = og_path = None
     try:
         carrier_path = _save_upload(request.files.get("carrier"))
         contractor_path = _save_upload(request.files.get("contractor"))
+        og_path = _save_upload(request.files.get("og"))   # optional original carrier
         if not carrier_path or not contractor_path:
             return jsonify({"error": "Upload both a carrier estimate and a "
                                      "contractor estimate."}), 400
 
         carrier = extract_estimate(carrier_path, "carrier")
         contractor = extract_estimate(contractor_path, "contractor")
+        og = extract_estimate(og_path, "og") if og_path else None
 
-        # The contractor PDF is parsed and no longer needed; the carrier PDF is
-        # kept until it has been marked up.
+        # The contractor and original PDFs are parsed and no longer needed; the
+        # current carrier PDF is kept until it has been marked up.
         cleanup_file(contractor_path)
-        contractor_path = None
+        cleanup_file(og_path)
+        contractor_path = og_path = None
 
         if not carrier.items and carrier.grand_rcv == 0 and \
                 not contractor.items and contractor.grand_rcv == 0:
@@ -161,7 +164,10 @@ def run():
                                      "without OCR, or an unsupported format."}), 422
 
         claimant = _claimant_from(contractor.name, carrier.name)
-        recon = reconcile_matched(carrier, contractor, claimant, PLAYBOOK)
+        if og is not None:
+            recon = reconcile_effectiveness(og, carrier, contractor, claimant, PLAYBOOK)
+        else:
+            recon = reconcile_matched(carrier, contractor, claimant, PLAYBOOK)
 
         # Paint the difference onto the carrier estimate: the primary deliverable.
         markup_name = f"{claimant}-carrier-markup.pdf"
@@ -182,8 +188,9 @@ def run():
             warnings=[scanned_warning, swap_hint])
 
         n_missing = sum(1 for s in recon.suggestions if s.status == "MISSING")
-        return jsonify({
+        payload = {
             "claimant": recon.claimant,
+            "mode": recon.mode,
             "gap": round(recon.contractor_grand - recon.carrier_grand, 2),
             "est_recoverable": recon.est_recoverable,
             "carrier": _side(carrier),
@@ -201,12 +208,27 @@ def run():
             "swap_hint": swap_hint,
             "markup_download": url_for("reconciler.download_file", name=markup_name),
             "log_path": log_paths["md"],
-        })
+        }
+        if recon.mode == "effectiveness":
+            payload["effectiveness"] = {
+                "og_name": recon.og_name,
+                "og_grand": recon.og_grand,
+                "carrier_grand": recon.carrier_grand,
+                "contractor_grand": recon.contractor_grand,
+                "ask": recon.ask_dollars,
+                "approved": recon.approved_dollars,
+                "outstanding": recon.outstanding_dollars,
+                "rate": recon.effectiveness,
+                "approved_wins": stats.get("approved_wins", 0),
+                "won_tagged": stats.get("won_tagged", 0),
+            }
+        return jsonify(payload)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         cleanup_file(carrier_path)
         cleanup_file(contractor_path)
+        cleanup_file(og_path)
 
 
 @bp.route("/download/<name>")

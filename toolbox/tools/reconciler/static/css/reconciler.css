@@ -11,13 +11,26 @@
 
 /* Upload row */
 .rec-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.rec-inputs-3 { grid-template-columns: 1fr 1fr 1fr; }
 .rec-input { display: flex; flex-direction: column; gap: 6px; }
 .rec-input label { font-weight: 600; font-size: 0.9rem; color: var(--green-900); }
+.rec-optional {
+  font-weight: 600; font-size: 0.68rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted);
+  background: var(--sage-100); border-radius: 999px; padding: 1px 7px; margin-left: 4px;
+}
 .rec-input input[type="file"] {
   border: 1px dashed var(--line); border-radius: 8px;
   background: var(--sage-50); padding: 10px; font-size: 0.85rem;
 }
-@media (max-width: 720px) { .rec-inputs { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .rec-inputs, .rec-inputs-3 { grid-template-columns: 1fr; } }
+
+/* Summary sub-line (effectiveness: original -> current -> contractor) */
+.rec-summary-sub {
+  margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: 0.82rem; color: var(--muted); font-weight: 600;
+}
+.rec-summary-sub:empty { display: none; }
 
 /* Loading */
 .loading { text-align: center; padding: 28px; }

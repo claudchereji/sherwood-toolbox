@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Estimate Reconciler - Sherwood Toolbox{% endblock %}
 {% block page_title %}Estimate Reconciler{% endblock %}
-{% block page_subtitle %}Mark up a carrier estimate against a contractor estimate{% endblock %}
+{% block page_subtitle %}Mark up a carrier estimate against a contractor supplement{% endblock %}
 {% block extra_head %}
   <link rel="stylesheet" href="{{ url_for('reconciler.static', filename='css/reconciler.css') }}">
 {% endblock %}
@@ -10,17 +10,21 @@
 <div class="rec-flow">
 
   <div class="panel">
-    <p class="panel-label">Upload the two estimates</p>
-    <p class="muted-note">Provide the carrier insurance estimate and the contractor Xactimate estimate for the same claim. The tool marks up the carrier PDF in place: a summary page up front, missing scope listed by category, and every line item the contractor measured higher highlighted on the page and colored by how large the dollar gap is. The full line-by-line breakdown is written to a log rather than shown here. Uploaded PDFs are read locally and deleted once the markup is built.</p>
+    <p class="panel-label">Upload the estimates</p>
+    <p class="muted-note">Provide the current carrier estimate and your contractor supplement for the same claim. Add the <strong>original carrier estimate</strong> (optional) to measure how much of your supplement the carrier has approved so far: the tool then reports an approval rate, checks off your approved items in blue, and paints the outstanding scope in green by section. The full breakdown is written to a log. Uploaded PDFs are read locally and deleted once the markup is built.</p>
     <form id="recForm" enctype="multipart/form-data">
-      <div class="rec-inputs">
+      <div class="rec-inputs rec-inputs-3">
         <div class="rec-input">
-          <label for="carrierInput">Carrier estimate</label>
+          <label for="carrierInput">Current carrier estimate</label>
           <input type="file" id="carrierInput" name="carrier" accept=".pdf" required>
         </div>
         <div class="rec-input">
-          <label for="contractorInput">Contractor estimate</label>
+          <label for="contractorInput">Contractor supplement</label>
           <input type="file" id="contractorInput" name="contractor" accept=".pdf" required>
+        </div>
+        <div class="rec-input">
+          <label for="ogInput">Original carrier estimate <span class="rec-optional">optional</span></label>
+          <input type="file" id="ogInput" name="og" accept=".pdf">
         </div>
       </div>
       <button type="submit" class="btn btn-primary" id="runBtn">Mark up carrier estimate</button>
@@ -36,40 +40,37 @@
 
     <div class="panel rec-summary">
       <div class="rec-headline">
-        <span class="rec-recoverable-label">Estimated recoverable</span>
-        <span class="rec-recoverable" id="recoverable">$0.00</span>
+        <span class="rec-recoverable-label" id="headLabel">Estimated recoverable</span>
+        <span class="rec-recoverable" id="headValue">$0.00</span>
       </div>
       <div class="rec-totals">
-        <div><span class="rec-t-label">Carrier RCV</span><span class="rec-t-val" id="carrierRcv">$0.00</span><span class="rec-t-sub" id="carrierSub"></span></div>
-        <div><span class="rec-t-label">Contractor RCV</span><span class="rec-t-val" id="contractorRcv">$0.00</span><span class="rec-t-sub" id="contractorSub"></span></div>
-        <div><span class="rec-t-label">Total RCV gap</span><span class="rec-t-val" id="totalGap">$0.00</span><span class="rec-t-sub">contractor minus carrier</span></div>
+        <div><span class="rec-t-label" id="t1Label"></span><span class="rec-t-val" id="t1Val"></span><span class="rec-t-sub" id="t1Sub"></span></div>
+        <div><span class="rec-t-label" id="t2Label"></span><span class="rec-t-val" id="t2Val"></span><span class="rec-t-sub" id="t2Sub"></span></div>
+        <div><span class="rec-t-label" id="t3Label"></span><span class="rec-t-val" id="t3Val"></span><span class="rec-t-sub" id="t3Sub"></span></div>
       </div>
-      <div class="rec-op">
-        <span class="rec-op-label">Overhead &amp; Profit applied</span>
-        <label class="rec-op-flag"><input type="checkbox" id="carrierOp" disabled> Carrier</label>
-        <label class="rec-op-flag"><input type="checkbox" id="contractorOp" disabled> Contractor</label>
-      </div>
+      <p class="rec-summary-sub" id="summarySub"></p>
     </div>
 
     <div id="alerts"></div>
 
     <div class="panel rec-markup">
       <p class="panel-label">Marked-up carrier estimate</p>
-      <p class="muted-note">The difference is painted onto the carrier PDF. A summary page leads, then the carrier's own pages with the under-measured line items highlighted in place, then the missing scope listed by category. Open the summary page first.</p>
+      <p class="muted-note" id="markupNote">The difference is painted onto the carrier PDF. Open the summary page first.</p>
       <div class="rec-markup-stats">
         <div class="rec-stat">
-          <span class="rec-stat-num" id="stMissing">0</span>
-          <span class="rec-stat-lbl">missing line items</span>
-          <span class="rec-stat-sub" id="stMissingDollars"></span>
+          <span class="rec-stat-num" id="stA">0</span>
+          <span class="rec-stat-lbl" id="stALbl">missing line items</span>
+          <span class="rec-stat-sub" id="stASub"></span>
         </div>
         <div class="rec-stat">
-          <span class="rec-stat-num" id="stFlagged">0</span>
-          <span class="rec-stat-lbl">quantity gaps flagged</span>
-          <span class="rec-stat-sub" id="stLocated"></span>
+          <span class="rec-stat-num" id="stB">0</span>
+          <span class="rec-stat-lbl" id="stBLbl">quantity gaps flagged</span>
+          <span class="rec-stat-sub" id="stBSub"></span>
         </div>
         <div class="rec-stat">
-          <span class="rec-stat-num" id="stPages">0</span>
-          <span class="rec-stat-lbl">summary pages added</span>
+          <span class="rec-stat-num" id="stC">0</span>
+          <span class="rec-stat-lbl" id="stCLbl">summary pages added</span>
+          <span class="rec-stat-sub" id="stCSub"></span>
         </div>
       </div>
       <button class="btn btn-primary" id="dlMarkup">Download marked-up carrier estimate (PDF)</button>
@@ -92,8 +93,20 @@
     const s = Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     return (v < 0 ? '-$' : '$') + s;
   }
-  function count(x) {
-    return Number(x || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  function signedMoney(x) {
+    const v = Number(x || 0);
+    return (v >= 0 ? '+' : '-') + '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+  function count(x) { return Number(x || 0).toLocaleString('en-US', {maximumFractionDigits: 0}); }
+  function tile(n, label, val, sub) {
+    $('t' + n + 'Label').textContent = label;
+    $('t' + n + 'Val').textContent = val;
+    $('t' + n + 'Sub').textContent = sub || '';
+  }
+  function stat(slot, num, label, sub) {
+    $('st' + slot).textContent = num;
+    $('st' + slot + 'Lbl').textContent = label;
+    $('st' + slot + 'Sub').textContent = sub || '';
   }
 
   function alertBox(kind, text) {
@@ -132,10 +145,41 @@
     };
   }
 
+  function renderEffectiveness(data) {
+    const e = data.effectiveness, c = data.counts || {};
+    $('headLabel').textContent = 'Approval effectiveness';
+    $('headValue').textContent = Math.round((e.rate || 0) * 100) + '%';
+    tile(1, 'Won to date', signedMoney(e.approved), 'original to current');
+    tile(2, 'Still outstanding', money(e.outstanding), 'asked, not yet approved');
+    tile(3, 'Your supplement (ask)', money(e.ask), '');
+    $('summarySub').textContent =
+      'Original ' + money(e.og_grand) + '  →  current ' + money(e.carrier_grand) +
+      '  →  contractor ' + money(e.contractor_grand);
+    $('markupNote').textContent = 'Approved items are checked in blue on the carrier pages; outstanding scope is painted in green by section, keyed by supplement line number. Open the summary page first.';
+    stat('A', count(c.missing), 'outstanding items', money(c.missing_dollars) + ', ' + count(c.missing_painted) + ' painted in place');
+    stat('B', count(e.won_tagged), 'approved wins tagged', 'checked in blue');
+    stat('C', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' highlighted' : 'none under-measured');
+  }
+
+  function renderRecoverable(data) {
+    const c = data.counts || {};
+    $('headLabel').textContent = 'Estimated recoverable';
+    $('headValue').textContent = money(data.est_recoverable);
+    tile(1, 'Carrier RCV', money(data.carrier.grand_rcv), data.carrier.name);
+    tile(2, 'Contractor RCV', money(data.contractor.grand_rcv), data.contractor.name);
+    tile(3, 'Total RCV gap', money(data.gap), 'contractor minus carrier');
+    $('summarySub').textContent = '';
+    $('markupNote').textContent = 'Missing scope is painted in green by section; under-measured lines are highlighted in place. Open the summary page first.';
+    stat('A', count(c.missing), 'missing line items', c.missing_dollars ? money(c.missing_dollars) + ' in scope, ' + count(c.missing_painted) + ' painted' : '');
+    stat('B', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' of ' + count(c.flagged) + ' highlighted' : 'none under-measured');
+    stat('C', count(c.added_pages), 'summary pages added', '');
+  }
+
   $('recForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const carrier = $('carrierInput').files[0];
     const contractor = $('contractorInput').files[0];
+    const og = $('ogInput').files[0];
     if (!carrier || !contractor) { alert('Select both a carrier and a contractor PDF.'); return; }
 
     $('results').style.display = 'none';
@@ -145,31 +189,17 @@
     const fd = new FormData();
     fd.append('carrier', carrier);
     fd.append('contractor', contractor);
+    if (og) fd.append('og', og);
 
     try {
       const resp = await fetch(REC_URLS.run, { method: 'POST', body: fd });
       const data = await resp.json();
       if (data.error) { alert(data.error); return; }
 
-      $('recoverable').textContent = money(data.est_recoverable);
-      $('carrierRcv').textContent = money(data.carrier.grand_rcv);
-      $('carrierSub').textContent = data.carrier.name;
-      $('contractorRcv').textContent = money(data.contractor.grand_rcv);
-      $('contractorSub').textContent = data.contractor.name;
-      $('totalGap').textContent = money(data.gap);
-      $('carrierOp').checked = !!data.carrier.has_op;
-      $('contractorOp').checked = !!data.contractor.has_op;
+      if (data.mode === 'effectiveness' && data.effectiveness) renderEffectiveness(data);
+      else renderRecoverable(data);
 
-      const c = data.counts || {};
-      $('stMissing').textContent = count(c.missing);
-      $('stMissingDollars').textContent = c.missing_dollars
-        ? money(c.missing_dollars) + ' in scope, ' + count(c.missing_painted) + ' painted in place'
-        : '';
-      $('stFlagged').textContent = count(c.flagged);
-      $('stLocated').textContent = c.flagged ? (count(c.located) + ' of ' + count(c.flagged) + ' highlighted in place') : 'none under-measured';
-      $('stPages').textContent = count(c.added_pages);
       $('logNote').textContent = data.log_path ? ('Full line-by-line breakdown logged to ' + data.log_path) : '';
-
       buildAlerts(data);
       wireDownload($('dlMarkup'), data.markup_download);
 

@@ -221,6 +221,30 @@ class LineItem:
     deprec: float
     acv: float
     category: str
+    section: str = ""      # estimate section (e.g. "Front Elevation"), from Totals
+
+
+# A section ends with a 'Totals: <name>' line (clean across Xactimate and
+# Symbility, and present when section headers are noisy). An item's section is
+# the first Totals line that follows it.
+TOTALS_LINE = re.compile(r"^\s*Totals:\s*(.+?)(?:\s{2,}.*)?$")
+
+
+def _section_marks(lines):
+    """Ordered (line_index, section_name) for every 'Totals:' delimiter."""
+    marks = []
+    for i, ln in enumerate(lines):
+        m = TOTALS_LINE.match(ln)
+        if m:
+            marks.append((i, m.group(1).strip()))
+    return marks
+
+
+def _section_for(idx, marks):
+    for i, name in marks:
+        if i > idx:
+            return name
+    return ""
 
 
 def _finish_item(number, desc_parts, data_text):
@@ -266,6 +290,7 @@ def _parse_xactimate(lines):
     """Unified single-line + multi-line Xactimate parser."""
     # header line indices
     idxs = [k for k, ln in enumerate(lines) if HEADER_XACT.match(ln)]
+    marks = _section_marks(lines)
     items = []
     for a, start in enumerate(idxs):
         end = idxs[a + 1] if a + 1 < len(idxs) else len(lines)
@@ -299,6 +324,7 @@ def _parse_xactimate(lines):
 
         item = _finish_item(number, desc_parts, " ".join(record))
         if item:
+            item.section = _section_for(start, marks)
             items.append(item)
     return items
 
@@ -306,6 +332,7 @@ def _parse_xactimate(lines):
 def _parse_symbility(lines):
     """Liberty Mutual / Symbility: 'N desc qty $price UNIT ... RC dep ACV'."""
     items = []
+    marks = _section_marks(lines)
     n = len(lines)
     for i in range(n):
         m = HEADER_SYMB.match(lines[i])
@@ -337,12 +364,14 @@ def _parse_symbility(lines):
             deprec = vals[-2]
         rcv = round(acv + deprec, 2)
         desc = _WS.sub(" ", desc_head.strip())
-        items.append(LineItem(
+        it = LineItem(
             number=int(m.group(1)), description=desc, norm_desc=normalize_desc(desc),
             base=base_key(desc), action=split_action(desc)[0],
             quantity=_num(qm.group(1)), unit=qm.group(3).upper(),
             unit_price=_num(qm.group(2)), rcv=rcv, deprec=round(deprec, 2),
-            acv=round(acv, 2), category=infer_category(desc)))
+            acv=round(acv, 2), category=infer_category(desc))
+        it.section = _section_for(i, marks)
+        items.append(it)
     return items
 
 

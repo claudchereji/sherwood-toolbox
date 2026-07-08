@@ -36,7 +36,7 @@ def _safe(name: str) -> str:
 def _snapshot(recon, *, markup_stats, sides, warnings) -> dict:
     """A JSON-serializable record of everything the reconciliation found."""
     missing = [asdict(s) for s in recon.suggestions if s.status == "MISSING"]
-    return {
+    snap = {
         "logged_at": datetime.now().isoformat(timespec="seconds"),
         "claimant": recon.claimant,
         "mode": recon.mode,
@@ -59,6 +59,17 @@ def _snapshot(recon, *, markup_stats, sides, warnings) -> dict:
         "sides": sides or {},
         "warnings": [w for w in (warnings or []) if w],
     }
+    if recon.mode == "effectiveness":
+        snap["effectiveness"] = {
+            "og_name": recon.og_name,
+            "og_grand": recon.og_grand,
+            "ask": recon.ask_dollars,
+            "approved_to_date": recon.approved_dollars,
+            "outstanding": recon.outstanding_dollars,
+            "rate": recon.effectiveness,
+            "approved_wins": [asdict(w) for w in recon.approved_wins],
+        }
+    return snap
 
 
 def log_reconciliation(recon, out_dir, *, markup_stats=None, sides=None,
@@ -69,7 +80,9 @@ def log_reconciliation(recon, out_dir, *, markup_stats=None, sides=None,
     logger so a run is traceable in the app's console output.
     """
     os.makedirs(out_dir, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    now = datetime.now()
+    # Millisecond suffix so two runs in the same second do not overwrite a log.
+    stamp = now.strftime("%Y%m%d-%H%M%S-") + f"{now.microsecond // 1000:03d}"
     base = f"{_safe(recon.claimant)}-{stamp}"
     md_path = os.path.join(out_dir, base + ".md")
     json_path = os.path.join(out_dir, base + ".json")

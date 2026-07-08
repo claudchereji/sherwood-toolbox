@@ -56,6 +56,7 @@ class Suggestion:
     confidence: str
     note: str = ""
     number: int = 0        # line-item number as printed in the source estimate
+    section: str = ""      # source-estimate section the item belongs to
 
 
 @dataclass
@@ -98,6 +99,14 @@ class Recon:
     notes: list = field(default_factory=list)
     carrier_statements: list = field(default_factory=list)
     hypotheses: list = field(default_factory=list)
+    # Three-way approval-effectiveness fields (populated in effectiveness mode).
+    og_name: str = ""
+    og_grand: float = 0.0
+    ask_dollars: float = 0.0          # supplement over the original carrier
+    approved_dollars: float = 0.0     # current carrier over the original (won to date)
+    outstanding_dollars: float = 0.0  # supplement still not in the current carrier
+    effectiveness: float = 0.0        # approved / ask, by grand-total dollars
+    approved_wins: list = field(default_factory=list)  # current-carrier LineItems new vs OG
 
 
 # --------------------------------------------------------------------------- #
@@ -249,7 +258,7 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
             status="MISSING", description=it.description, category=it.category,
             quantity=it.quantity, unit=it.unit, carrier_unit_price=0.0,
             contractor_unit_price=it.unit_price, dollars=it.rcv,
-            confidence="high", number=it.number,
+            confidence="high", number=it.number, section=it.section,
             note="in contractor scope, absent from carrier"))
 
     # Shared items: every matched pair with its price and quantity breakdown, all
@@ -301,6 +310,47 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
     cn = _confidence_note(carrier)
     if cn:
         r.notes.append(cn)
+    return r
+
+
+# --------------------------------------------------------------------------- #
+# Effectiveness mode (three-way: original carrier, current carrier, contractor)
+# --------------------------------------------------------------------------- #
+
+def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
+    """Measure how much of the contractor's supplement the carrier has approved.
+
+    Roles:
+      og         - the original carrier estimate; the baseline the supplement was
+                   built on.
+      carrier    - the current carrier estimate, after the supplement.
+      contractor - the contractor supplement (the original plus the items we added).
+
+    The current-carrier-vs-contractor reconciliation still supplies the outstanding
+    scope (the MISSING suggestions), the under-measured shared items, the RCV
+    bridge, and the hypotheses. This adds the grand-total approval math and the
+    list of approved wins (current-carrier line items new since the original).
+
+    Grand totals drive the headline because they are reliable to the cent; line
+    matching drives only which items to paint.
+    """
+    r = reconcile_matched(carrier, contractor, claimant, playbook)
+    r.mode = "effectiveness"
+    r.og_name = og.name
+    r.og_grand = og.grand_rcv
+    r.ask_dollars = round(contractor.grand_rcv - og.grand_rcv, 2)
+    r.approved_dollars = round(carrier.grand_rcv - og.grand_rcv, 2)
+    r.outstanding_dollars = round(contractor.grand_rcv - carrier.grand_rcv, 2)
+    r.effectiveness = (round(r.approved_dollars / r.ask_dollars, 4)
+                       if r.ask_dollars > 0 else 0.0)
+
+    # Approved wins: current-carrier line items not present in the original.
+    _, approved_wins, _ = match_line_items(og.items, carrier.items)
+    r.approved_wins = approved_wins
+
+    r.notes.insert(0, "effectiveness is measured from grand totals (reliable to "
+                      "the cent); the per-item lists use line matching and may not "
+                      "sum to those totals exactly.")
     return r
 
 

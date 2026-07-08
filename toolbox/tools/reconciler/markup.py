@@ -42,11 +42,16 @@ LINE = (0.80, 0.84, 0.76)        # --line  #cdd6c2
 SAGE = (0.93, 0.95, 0.90)        # --sage-50 #eef1e6
 WHITE = (1, 1, 1)
 
-# Painted-in missing scope: a clear "add this" green, distinct from the warm
+# Painted-in outstanding scope: a clear "add this" green, distinct from the warm
 # under-measured band colours, on an opaque pale-green row so it reads as an
 # insertion over the carrier's own content.
 ADD = (0.16, 0.52, 0.29)
 ADD_BG = (0.90, 0.96, 0.90)
+
+# Approved wins: supplement items the carrier has since picked up. Marked with a
+# blue check tab and a faint blue band, so a win reads apart from an under-
+# measured line (warm) and from outstanding scope (green).
+WON = (0.13, 0.40, 0.70)
 
 # Severity of a quantity shortfall, keyed by its dollar size (contractor unit
 # price x the quantity the carrier is short). The band fill is drawn translucent
@@ -197,7 +202,26 @@ def flag_row(page, rect, marker: int, sev: Severity):
                          color=WHITE)
 
 
-# === SECTION: painting missing scope in place on the carrier pages ===
+def tag_won(page, rect):
+    """Mark a carrier line the carrier approved from our supplement: a faint blue
+    band and a blue check tab in the left margin."""
+    w = page.rect.width
+    band = fitz.Rect(BAND_INSET, rect.y0 - 1.5, w - BAND_INSET, rect.y1 + 1.5)
+    page.draw_rect(band, color=None, fill=WON, fill_opacity=0.14)
+    page.draw_line(fitz.Point(BAND_INSET, band.y0), fitz.Point(BAND_INSET, band.y1),
+                   color=WON, width=1.4)
+    if rect.x0 >= FLAG_R + 2:
+        tab = fitz.Rect(FLAG_L, rect.y0 - 1.0, FLAG_R, rect.y1 + 1.0)
+        page.draw_rect(tab, color=None, fill=WON, fill_opacity=1.0, radius=0.25)
+        # a checkmark drawn from two segments (the Base-14 fonts have no check glyph)
+        cy = (rect.y0 + rect.y1) / 2
+        page.draw_line(fitz.Point(FLAG_L + 6, cy + 1), fitz.Point(FLAG_L + 9, cy + 3.5),
+                       color=WHITE, width=1.3)
+        page.draw_line(fitz.Point(FLAG_L + 9, cy + 3.5), fitz.Point(FLAG_R - 5, cy - 2.5),
+                       color=WHITE, width=1.3)
+
+
+# === SECTION: painting outstanding scope in place on the carrier pages ===
 ADD_HEADER_H = 12.0
 ADD_ROW_H = 11.0
 ADD_BOTTOM_PAD = 40.0     # keep painted rows clear of the page footer
@@ -210,53 +234,61 @@ def _right(page, x_right, base, s, font, size, color):
                      color=color)
 
 
-def _paint_add_row(page, x0, x1, y, cells):
-    """One opaque pale-green insertion row: green left rule, description, quantity,
-    and RCV. Opaque so it reads cleanly wherever it lands on the carrier page."""
+def _paint_add_row(page, x0, x1, y, num, desc, qty, rcv):
+    """One opaque pale-green insertion row: green left rule, the supplement line
+    number, the description, quantity, and RCV. Opaque so it reads cleanly wherever
+    it lands on the carrier page."""
     page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_ROW_H), color=None, fill=ADD_BG,
                    fill_opacity=1.0)
     page.draw_line(fitz.Point(x0, y), fitz.Point(x0, y + ADD_ROW_H), color=ADD, width=2)
-    desc, qty, rcv = cells
     base = y + 8.2
-    rcv_w, qty_w = 66.0, 60.0
+    rcv_w, qty_w, num_w = 66.0, 58.0, 26.0
+    num_x = x0 + 6
+    desc_x = num_x + num_w
     desc_right = x1 - rcv_w - qty_w - 8
-    page.insert_text(fitz.Point(x0 + 8, base), _fit(desc, "helv", 8, desc_right - x0 - 10),
+    page.insert_text(fitz.Point(num_x, base), f"#{num}" if num else "",
+                     fontname="hebo", fontsize=8, color=ADD)
+    page.insert_text(fitz.Point(desc_x, base), _fit(desc, "helv", 8, desc_right - desc_x),
                      fontname="helv", fontsize=8, color=GREEN)
     _right(page, x1 - rcv_w - 4, base, qty, "helv", 8, GREEN)
     _right(page, x1 - 4, base, rcv, "hebo", 8, GREEN)
 
 
-def paint_block(page, cat, items, start_y):
-    """Paint one category's missing items onto the page, starting at `start_y`
+def paint_block(page, label, items, start_y):
+    """Paint one section's outstanding items onto the page, starting at `start_y`
     (below the anchor line). Returns (bottom_y, rows_painted). Rows that will not
-    fit above the footer are summarised in a final "+N more" line that points to
-    the back-of-document list."""
+    fit above the footer are summarised in a final "+N more" line pointing to the
+    back-of-document list."""
     x0, x1 = BAND_INSET, page.rect.width - BAND_INSET
     max_y = page.rect.height - ADD_BOTTOM_PAD
     subtotal = round(sum(s.dollars for s in items), 2)
     y = start_y
 
-    # Not even room for the header + one row: leave a one-line in-context marker.
+    # No room even for a one-line marker without hitting the footer: skip drawing;
+    # the items are still in the back-of-document list.
+    if y + ADD_HEADER_H > max_y:
+        return y, 0
+
+    # Room for a marker but not a full row: leave a one-line in-context marker.
     if y + ADD_HEADER_H + ADD_ROW_H > max_y:
         page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_HEADER_H), color=None, fill=ADD,
                        fill_opacity=1.0)
         page.insert_text(fitz.Point(x0 + 6, y + 8.7),
-                         f"+ ADD {len(items)} {cat} items ({_money(subtotal)}) - "
-                         f"see Missing scope at the back", fontname="hebo",
-                         fontsize=7.5, color=WHITE)
+                         f"+ ADD {len(items)} items in {label} ({_money(subtotal)}) - "
+                         f"see the back", fontname="hebo", fontsize=7.5, color=WHITE)
         return y + ADD_HEADER_H, 0
 
     page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_HEADER_H), color=None, fill=ADD,
                    fill_opacity=1.0)
-    page.insert_text(fitz.Point(x0 + 6, y + 8.7), f"+ SCOPE TO ADD - {cat}",
+    page.insert_text(fitz.Point(x0 + 6, y + 8.7), f"+ SCOPE TO ADD - {label}",
                      fontname="hebo", fontsize=7.5, color=WHITE)
     y += ADD_HEADER_H
 
     fit = int((max_y - y) // ADD_ROW_H)
     show = items if len(items) <= fit else items[:max(fit - 1, 1)]
     for s in show:
-        _paint_add_row(page, x0, x1, y, (s.description, f"{_qty(s.quantity)} {s.unit}".strip(),
-                                         _money(s.dollars)))
+        _paint_add_row(page, x0, x1, y, s.number, s.description,
+                       f"{_qty(s.quantity)} {s.unit}".strip(), _money(s.dollars))
         y += ADD_ROW_H
     remaining = len(items) - len(show)
     if remaining > 0:
@@ -265,43 +297,60 @@ def paint_block(page, cat, items, start_y):
                        fill_opacity=1.0)
         page.draw_line(fitz.Point(x0, y), fitz.Point(x0, y + ADD_ROW_H), color=ADD, width=2)
         page.insert_text(fitz.Point(x0 + 8, y + 8.2),
-                         f"+ {remaining} more {cat} items ({_money(rem_dollars)}) - "
+                         f"+ {remaining} more in {label} ({_money(rem_dollars)}) - "
                          f"full list at the back", fontname="helv", fontsize=8, color=ADD)
         y += ADD_ROW_H
     return y, len(show)
 
 
-def paint_missing_in_context(doc, missing, located_all, cat_of):
-    """Paint each missing item onto the carrier page, below the last carrier line
-    of its own category (so roofing scope lands in the roofing section). A category
-    the carrier never worked has no anchor, so it lands after the last carrier line
-    overall. Blocks on the same page stack rather than overlap. Returns the number
-    of items painted as full rows."""
+def _sec_tokens(name):
+    """Alphabetic tokens of a section name, lower-cased ('Roof1' -> {'roof'})."""
+    return {t for t in re.split(r"[^A-Za-z]+", (name or "").lower()) if len(t) >= 3}
+
+
+def _anchor_for_section(sec, carrier_secs, fallback):
+    """Anchor a contractor section to the carrier section whose name overlaps it
+    most (front elevation -> front elevation; roof -> dwelling/barn roof). Falls
+    back to the bottom of the carrier's line items when nothing matches."""
+    toks = _sec_tokens(sec)
+    best, best_score = None, 0
+    for csec, anchor in carrier_secs.items():
+        score = len(toks & _sec_tokens(csec))
+        if score > best_score:
+            best, best_score = anchor, score
+    return best if best is not None else fallback
+
+
+def paint_outstanding_by_section(doc, missing, located_all, sec_of):
+    """Paint outstanding items onto the carrier pages, grouped by their supplement
+    section and anchored below the matching carrier section. Blocks on one page
+    stack rather than overlap. Returns the number of items painted as full rows."""
     if not missing or not located_all:
         return 0
 
-    anchor_by_cat = {}
+    carrier_secs = {}
     for num, (pno, rect) in located_all.items():
-        cat = cat_of.get(num, "OTHER")
-        cur = anchor_by_cat.get(cat)
+        s = sec_of.get(num, "")
+        cur = carrier_secs.get(s)
         if cur is None or (pno, rect.y1) > (cur[0], cur[1].y1):
-            anchor_by_cat[cat] = (pno, rect)
+            carrier_secs[s] = (pno, rect)
     fallback = max(located_all.values(), key=lambda pr: (pr[0], pr[1].y1))
 
     groups, order = {}, []
     for s in missing:
-        if s.category not in groups:
-            groups[s.category] = []
-            order.append(s.category)
-        groups[s.category].append(s)
+        sec = s.section or "Other"
+        if sec not in groups:
+            groups[sec] = []
+            order.append(sec)
+        groups[sec].append(s)
 
     page_cursor = {}
     painted = 0
-    for cat in order:
-        pno, rect = anchor_by_cat.get(cat, fallback)
+    for sec in order:
+        pno, rect = _anchor_for_section(sec, carrier_secs, fallback)
         page = doc.load_page(pno)
         start_y = max(rect.y1 + 2.5, page_cursor.get(pno, 0.0))
-        bottom, n = paint_block(page, cat, groups[cat], start_y)
+        bottom, n = paint_block(page, sec, groups[sec], start_y)
         page_cursor[pno] = bottom + 3
         painted += n
     return painted
@@ -447,34 +496,86 @@ def _fit(s, font, size, width):
 
 
 # === SECTION: summary page (prepended) ===
-def _summary_page(doc, recon, flagged, missing, located_count, painted_count):
+def _summary_page(doc, recon, flagged, missing, located_count, painted_count, won_count):
     c = Canvas(doc, at_front=True, single_page=True)
-    c.heading(f"Reconciliation summary - {recon.claimant}", size=17)
-    c.text("Carrier estimate marked up against the contractor scope. Details are "
-           "flagged in place on the following pages and listed at the back.",
-           size=9.5, color=MUTED, gap=10)
+    if recon.mode == "effectiveness":
+        _summary_effectiveness(c, recon, flagged, missing, located_count,
+                               painted_count, won_count)
+    else:
+        _summary_recoverable(c, recon, flagged, missing, located_count, painted_count)
+    _summary_footer(c, recon)
 
-    # Headline recoverable, boxed
-    box_h = 48
+
+def _headline_box(c, label, value, sub):
+    box_h = 52
     c.space(box_h + 6)
     top = c.y
     c.page.draw_rect(fitz.Rect(MARGIN, top, PAGE_W - MARGIN, top + box_h),
                      color=None, fill=SAGE, fill_opacity=1.0)
     c.page.draw_line(fitz.Point(MARGIN, top), fitz.Point(MARGIN, top + box_h),
                      color=GREEN, width=3)
-    c.page.insert_text(fitz.Point(MARGIN + 14, top + 17), "ESTIMATED RECOVERABLE",
-                       fontname="hebo", fontsize=8.5, color=MUTED)
-    c.page.insert_text(fitz.Point(MARGIN + 14, top + 40), _money(recon.est_recoverable),
-                       fontname="hebo", fontsize=20, color=GREEN)
+    c.page.insert_text(fitz.Point(MARGIN + 14, top + 17), label, fontname="hebo",
+                       fontsize=8.5, color=MUTED)
+    c.page.insert_text(fitz.Point(MARGIN + 14, top + 42), value, fontname="hebo",
+                       fontsize=22, color=GREEN)
+    if sub:
+        vw = fitz.get_text_length(value, "hebo", 22)
+        c.page.insert_text(fitz.Point(MARGIN + 14 + vw + 12, top + 40), sub,
+                           fontname="helv", fontsize=10, color=MUTED)
     c.y = top + box_h + 12
 
-    # Three totals
+
+def _totals3(c, labels, values):
     third = (PAGE_W - 2 * MARGIN) / 3
-    c.row(["Carrier RCV", "Contractor RCV", "RCV gap"], [third] * 3,
-          head=True, size=9, color=MUTED)
-    c.row([_money(recon.carrier_grand), _money(recon.contractor_grand),
-           _signed_money(round(recon.contractor_grand - recon.carrier_grand, 2))],
-          [third] * 3, font="hebo", size=12, color=GREEN)
+    c.row(labels, [third] * 3, head=True, size=9, color=MUTED)
+    c.row(values, [third] * 3, font="hebo", size=12, color=GREEN)
+
+
+def _summary_effectiveness(c, recon, flagged, missing, located_count, painted_count,
+                           won_count):
+    c.heading(f"Approval effectiveness - {recon.claimant}", size=17)
+    c.text("How much of your supplement the carrier has approved so far. Approved "
+           "items are checked in blue on the carrier pages; outstanding scope is "
+           "painted in green where it belongs.", size=9.5, color=MUTED, gap=10)
+
+    pct = f"{recon.effectiveness * 100:.0f}%"
+    _headline_box(c, "APPROVAL EFFECTIVENESS", pct,
+                  f"of your {_money(recon.ask_dollars)} supplement approved so far")
+
+    _totals3(c, ["Won to date (original -> current)", "Still outstanding",
+                 "Your supplement (ask)"],
+             [_signed_money(recon.approved_dollars), _money(recon.outstanding_dollars),
+              _money(recon.ask_dollars)])
+    c.y += 6
+    _totals3(c, ["Original carrier RCV", "Current carrier RCV", "Contractor RCV"],
+             [_money(recon.og_grand), _money(recon.carrier_grand),
+              _money(recon.contractor_grand)])
+    c.text(f"Original: {recon.og_name}", size=8, color=MUTED, gap=1)
+    c.text(f"Current carrier: {recon.carrier_name}", size=8, color=MUTED, gap=1)
+    c.text(f"Contractor: {recon.contractor_name}", size=8, color=MUTED, gap=10)
+
+    c.rule()
+    c.subheading("What the markup shows")
+    c.text(f"-  {won_count} of your supplement items have been approved: the carrier "
+           f"picked them up since the original estimate. They are checked in blue on "
+           f"the carrier pages.", size=10, gap=6)
+    c.text(f"-  {len(missing)} items are still outstanding; {painted_count} are "
+           f"painted in green onto the carrier pages, grouped by their section and "
+           f"keyed by supplement line number. The full list is under "
+           f'"Outstanding scope" at the back.', size=10, gap=6)
+    _flagged_line(c, flagged, located_count)
+    _legend(c, effectiveness=True)
+
+
+def _summary_recoverable(c, recon, flagged, missing, located_count, painted_count):
+    c.heading(f"Reconciliation summary - {recon.claimant}", size=17)
+    c.text("Carrier estimate marked up against the contractor scope. Details are "
+           "flagged in place on the following pages and listed at the back.",
+           size=9.5, color=MUTED, gap=10)
+    _headline_box(c, "ESTIMATED RECOVERABLE", _money(recon.est_recoverable), "")
+    _totals3(c, ["Carrier RCV", "Contractor RCV", "RCV gap"],
+             [_money(recon.carrier_grand), _money(recon.contractor_grand),
+              _signed_money(round(recon.contractor_grand - recon.carrier_grand, 2))])
     c.text(f"Carrier: {recon.carrier_name}", size=8, color=MUTED, gap=1)
     c.text(f"Contractor: {recon.contractor_name}", size=8, color=MUTED, gap=8)
 
@@ -483,14 +584,17 @@ def _summary_page(doc, recon, flagged, missing, located_count, painted_count):
           ("applied" if recon.carrier_has_op else "NOT applied") +
           f".   Contractor: {'applied' if recon.contractor_has_op else 'not applied'}.")
     c.text(op, size=9.5, gap=10)
-
     c.rule()
     c.subheading("What the markup shows")
     c.text(f"-  {len(missing)} line items totalling {_money(missing_dollars)} are in "
            f"the contractor scope and absent from this estimate; {painted_count} are "
-           f"painted onto the carrier pages in green, below the carrier's matching "
-           f'section. The full list is under "Missing scope" at the back.',
-           size=10, gap=6)
+           f"painted onto the carrier pages in green, grouped by section. The full "
+           f'list is under "Missing scope" at the back.', size=10, gap=6)
+    _flagged_line(c, flagged, located_count)
+    _legend(c, effectiveness=False)
+
+
+def _flagged_line(c, flagged, located_count):
     c.text(f"-  {len(flagged)} shared line items are measured higher by the "
            f"contractor; {located_count} are highlighted in place on the pages that "
            f'follow, keyed to the "Quantity differences" table.', size=10, gap=6)
@@ -501,22 +605,25 @@ def _summary_page(doc, recon, flagged, missing, located_count, painted_count):
     else:
         c.y += 4
 
+
+def _legend(c, effectiveness):
     c.subheading("Legend")
-    _legend_row(c, ADD, "Scope to add: in the contractor estimate, not the carrier",
-                opacity=1.0)
+    if effectiveness:
+        _legend_check(c, "Approved: your supplement item the carrier has picked up")
+    _legend_row(c, ADD, "Scope to add: outstanding, not yet in the carrier", opacity=1.0)
     _legend_row(c, SEVERITIES[0].fill, "Under-measured line, major gap ($2,000 or more short)")
     _legend_row(c, SEVERITIES[1].fill, "Under-measured line, moderate gap ($1,000 to $2,000 short)")
     _legend_row(c, SEVERITIES[2].fill, "Under-measured line, minor gap (under $1,000 short)")
-    c.text("A numbered tab in the left margin marks each under-measured line; the "
-           "same number appears in the Quantity differences table.", size=8.5,
-           color=MUTED, gap=6)
+    c.text("A tab in the left margin marks each highlighted line; green blocks carry "
+           "the supplement line number.", size=8.5, color=MUTED, gap=6)
 
+
+def _summary_footer(c, recon):
     for n in recon.notes:
         c.text(f"Note: {n}", size=8.5, color=MUTED, gap=4)
     c.rule()
     c.text("An aid to review, not a guarantee of coverage. Figures are read from "
-           "the two PDFs as printed. Sherwood Estimates (c) 2026.",
-           size=8, color=MUTED)
+           "the PDFs as printed. Sherwood Estimates (c) 2026.", size=8, color=MUTED)
 
 
 def _legend_row(c, fill, label, opacity=0.5):
@@ -525,6 +632,21 @@ def _legend_row(c, fill, label, opacity=0.5):
     sw = fitz.Rect(MARGIN, top + 1, MARGIN + 22, top + 12)
     c.page.draw_rect(sw, color=None, fill=fill, fill_opacity=opacity)
     c.page.draw_rect(sw, color=fill, width=0.8)
+    c.page.insert_text(fitz.Point(MARGIN + 30, top + 10.5), label, fontname="helv",
+                       fontsize=9.5, color=INK)
+    c.y = top + 16
+
+
+def _legend_check(c, label):
+    c.space(16)
+    top = c.y
+    sw = fitz.Rect(MARGIN, top + 1, MARGIN + 22, top + 12)
+    c.page.draw_rect(sw, color=None, fill=WON, fill_opacity=1.0)
+    cy = top + 6.5
+    c.page.draw_line(fitz.Point(MARGIN + 6, cy + 1), fitz.Point(MARGIN + 9, cy + 3.5),
+                     color=WHITE, width=1.3)
+    c.page.draw_line(fitz.Point(MARGIN + 9, cy + 3.5), fitz.Point(MARGIN + 17, cy - 2.5),
+                     color=WHITE, width=1.3)
     c.page.insert_text(fitz.Point(MARGIN + 30, top + 10.5), label, fontname="helv",
                        fontsize=9.5, color=INK)
     c.y = top + 16
@@ -543,6 +665,12 @@ _THEME_TITLES = {"MATCHING": "Matching", "CODE": "Code / ordinance",
 
 def _detail_pages(doc, recon, flagged, missing, page_of):
     c = Canvas(doc)   # first appended page
+    eff = recon.mode == "effectiveness"
+
+    # --- Approved wins (effectiveness mode) ---
+    if eff:
+        _approved_section(c, recon)
+        c.rule(gap=12)
 
     # --- Quantity differences (decodes the in-line flags) ---
     c.heading("Quantity differences")
@@ -568,27 +696,32 @@ def _detail_pages(doc, recon, flagged, missing, page_of):
         c.text("None: no shared line item is measured higher by the contractor.",
                size=9.5, color=MUTED)
 
-    # --- Missing scope, grouped by category ---
+    # --- Outstanding / missing scope, grouped by section (matches the painting) ---
     c.rule(gap=12)
-    c.heading("Missing scope")
-    c.text("In the contractor scope, absent from the carrier estimate. These are "
-           "painted in green onto the carrier pages below their matching section; "
-           "this is the complete list, grouped by category, largest RCV first. RCV "
-           "is the value printed in the contractor estimate.", size=9, color=MUTED,
-           gap=8)
+    c.heading("Outstanding scope" if eff else "Missing scope")
+    c.text(("Your supplement items the carrier has not yet approved. " if eff else
+            "In the contractor scope, absent from the carrier estimate. ") +
+           "Painted in green onto the carrier pages by section; this is the complete "
+           "list, grouped by supplement section. The # is the supplement line number.",
+           size=9, color=MUTED, gap=8)
     if missing:
         cols = [34, 250, 66, 40, 78]
         aligns = [1, 0, 2, 0, 2]
-        cat = None
+        order, groups = [], {}
         for s in missing:
-            if s.category != cat:
-                cat = s.category
-                sub = round(sum(x.dollars for x in missing if x.category == cat), 2)
-                c.subheading(f"{cat}   -   {_money(sub)}")
-                c.row(["#", "Item", "Qty", "Unit", "RCV"], cols, head=True, size=8.5,
-                      color=GREEN, fill=SAGE, aligns=aligns)
-            c.row([str(s.number or ""), s.description, _qty(s.quantity), s.unit,
-                   _money(s.dollars)], cols, size=8.5, aligns=aligns)
+            sec = s.section or "Other"
+            if sec not in groups:
+                groups[sec] = []
+                order.append(sec)
+            groups[sec].append(s)
+        for sec in order:
+            sub = round(sum(x.dollars for x in groups[sec]), 2)
+            c.subheading(f"{sec}   -   {_money(sub)}")
+            c.row(["#", "Item", "Qty", "Unit", "RCV"], cols, head=True, size=8.5,
+                  color=GREEN, fill=SAGE, aligns=aligns)
+            for s in groups[sec]:
+                c.row([str(s.number or ""), s.description, _qty(s.quantity), s.unit,
+                       _money(s.dollars)], cols, size=8.5, aligns=aligns)
     else:
         c.text("None: the carrier estimate carries every contractor line item.",
                size=9.5, color=MUTED)
@@ -597,6 +730,26 @@ def _detail_pages(doc, recon, flagged, missing, page_of):
     _hypotheses_section(c, recon)
     _statements_section(c, recon)
     return c.pages
+
+
+def _approved_section(c, recon):
+    """Supplement items the carrier has approved since the original estimate."""
+    wins = recon.approved_wins
+    c.heading("Approved wins")
+    c.text(f"Line items in the current carrier estimate that were not in the "
+           f"original: {_money(recon.approved_dollars)} of scope won to date. These "
+           f"are checked in blue on the carrier pages.", size=9, color=MUTED, gap=8)
+    if not wins:
+        c.text("None matched: no new line items were found versus the original "
+               "carrier estimate.", size=9.5, color=MUTED)
+        return
+    cols = [34, 300, 56, 40, 78]
+    aligns = [1, 0, 2, 0, 2]
+    c.row(["#", "Item", "Qty", "Unit", "RCV"], cols, head=True, size=8.5,
+          color=WON, fill=SAGE, aligns=aligns)
+    for w in sorted(wins, key=lambda x: -x.rcv):
+        c.row([str(w.number or ""), w.description, _qty(w.quantity), w.unit,
+               _money(w.rcv)], cols, size=8.5, aligns=aligns)
 
 
 def _bridge_section(c, recon):
@@ -681,10 +834,11 @@ def mark_up_carrier(carrier, recon, out_path: str) -> dict:
     doc = fitz.open(carrier.path)
     orig_pages = len(doc)
 
-    # Locate every carrier line item once: used both to highlight the flagged ones
-    # and to anchor the painted-in missing scope beneath its own category.
+    # Locate every carrier line item once: used to highlight the under-measured
+    # lines, to anchor the painted-in outstanding scope by section, and to check
+    # off the approved wins.
     located_all = locate_items(doc, {it.number: it.description for it in carrier.items})
-    cat_of = {it.number: it.category for it in carrier.items}
+    sec_of = {it.number: it.section for it in carrier.items}
     marker_by_num = {f.carrier_number: i for i, f in enumerate(flagged, start=1)}
 
     # Highlight each located, under-measured line in place, coloured by its shortfall.
@@ -697,15 +851,23 @@ def mark_up_carrier(carrier, recon, out_path: str) -> dict:
         sev = severity_for(f.quantity_delta * f.contractor_unit_price)
         flag_row(doc.load_page(loc[0]), loc[1], marker_by_num[f.carrier_number], sev)
 
-    # Paint the missing scope onto the carrier pages, in the section it belongs to.
-    painted = paint_missing_in_context(doc, missing, located_all, cat_of)
+    # Check off approved wins (current-carrier lines new since the original).
+    won_count = 0
+    for w in getattr(recon, "approved_wins", []):
+        loc = located_all.get(w.number)
+        if loc:
+            tag_won(doc.load_page(loc[0]), loc[1])
+            won_count += 1
+
+    # Paint the outstanding scope onto the carrier pages, in its own section.
+    painted = paint_outstanding_by_section(doc, missing, located_all, sec_of)
 
     # A located item's final 1-based page = its original index, + 1 for the single
     # summary page prepended below, + 1 to make it 1-based. Appending the detail
     # pages does not move the original pages, so this holds.
     page_of = {num: pno + 2 for num, (pno, _r) in located_flagged.items()}
     detail_pages = _detail_pages(doc, recon, flagged, missing, page_of)
-    _summary_page(doc, recon, flagged, missing, len(located_flagged), painted)
+    _summary_page(doc, recon, flagged, missing, len(located_flagged), painted, won_count)
 
     doc.save(out_path, garbage=4, deflate=True)
     doc.close()
@@ -715,6 +877,8 @@ def mark_up_carrier(carrier, recon, out_path: str) -> dict:
         "located": len(located_flagged),
         "missing": len(missing),
         "missing_painted": painted,
+        "approved_wins": len(getattr(recon, "approved_wins", [])),
+        "won_tagged": won_count,
         "missing_dollars": round(sum(s.dollars for s in missing), 2),
         "orig_pages": orig_pages,
         "added_pages": 1 + detail_pages,
