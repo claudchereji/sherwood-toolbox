@@ -32,20 +32,22 @@ def _check(flag):
 def write_csv(recon, path):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["section", "category", "description", "unit",
+        w.writerow(["section", "carrier_number", "contractor_number",
+                    "category", "description", "unit",
                     "carrier_qty", "contractor_qty", "qty_delta",
                     "carrier_unit_price", "contractor_unit_price", "price_delta",
                     "carrier_rcv", "contractor_rcv", "rcv_delta"])
         for s in recon.suggestions:
             if s.status not in ("MISSING", "SUGGESTED"):
                 continue
-            w.writerow(["missing", s.category, s.description, s.unit,
-                        "0", _qty(s.quantity), _qty(s.quantity),
+            w.writerow(["missing", "", s.number or "", s.category, s.description,
+                        s.unit, "0", _qty(s.quantity), _qty(s.quantity),
                         "0.00", f"{s.contractor_unit_price:.2f}",
                         f"{s.contractor_unit_price:.2f}",
                         "0.00", f"{s.dollars:.2f}", f"{s.dollars:.2f}"])
         for s in recon.shared:
-            w.writerow(["shared", s.category, s.description, s.unit,
+            w.writerow(["shared", s.carrier_number or "", s.contractor_number or "",
+                        s.category, s.description, s.unit,
                         _qty(s.carrier_quantity), _qty(s.contractor_quantity),
                         _qty(s.quantity_delta),
                         f"{s.carrier_unit_price:.2f}", f"{s.contractor_unit_price:.2f}",
@@ -65,11 +67,11 @@ def _missing_by_category(recon):
         subtotal = round(sum(s.dollars for s in group), 2)
         out.append(f"### {cat} ({_money(subtotal)})")
         out.append("")
-        out.append("| Item | Qty | Unit | RCV (from estimate) |")
-        out.append("|---|---:|---|---:|")
+        out.append("| # | Item | Qty | Unit | RCV (from estimate) |")
+        out.append("|---:|---|---:|---|---:|")
         for s in group:
-            out.append(f"| {s.description} | {_qty(s.quantity)} | {s.unit} "
-                       f"| {_money(s.dollars)} |")
+            out.append(f"| {s.number or ''} | {s.description} | {_qty(s.quantity)} "
+                       f"| {s.unit} | {_money(s.dollars)} |")
         out.append("")
     return "\n".join(out)
 
@@ -77,12 +79,14 @@ def _missing_by_category(recon):
 def _shared_table(recon):
     if not recon.shared:
         return ""
-    out = ["| Category | Item | Carrier qty | Contr. qty | Delta qty "
+    out = ["| Carrier # | Contr. # | Category | Item "
+           "| Carrier qty | Contr. qty | Delta qty "
            "| Carrier $/u | Contr. $/u | Delta $/u "
            "| Carrier RCV | Contr. RCV | Delta RCV |",
-           "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+           "|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for s in recon.shared:
         out.append(
+            f"| {s.carrier_number or ''} | {s.contractor_number or ''} "
             f"| {s.category} | {s.description} "
             f"| {_qty(s.carrier_quantity)} | {_qty(s.contractor_quantity)} "
             f"| {_qty(s.quantity_delta)} "

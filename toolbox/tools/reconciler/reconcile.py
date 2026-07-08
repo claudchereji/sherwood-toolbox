@@ -54,6 +54,7 @@ class Suggestion:
     dollars: float         # estimated recoverable RCV impact
     confidence: str
     note: str = ""
+    number: int = 0        # line-item number as printed in the source estimate
 
 
 @dataclass
@@ -62,6 +63,8 @@ class SharedItem:
     All figures are pulled from the two estimates as printed."""
     description: str
     category: str
+    carrier_number: int            # line number as printed in the carrier estimate
+    contractor_number: int         # line number as printed in the contractor estimate
     unit: str
     carrier_quantity: float
     contractor_quantity: float
@@ -160,7 +163,7 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
             status="MISSING", description=it.description, category=it.category,
             quantity=it.quantity, unit=it.unit, carrier_unit_price=0.0,
             contractor_unit_price=it.unit_price, dollars=it.rcv,
-            confidence="high",
+            confidence="high", number=it.number,
             note="in contractor scope, absent from carrier"))
 
     # Shared items: every matched pair with its price and quantity breakdown, all
@@ -171,6 +174,8 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
         shared.append(SharedItem(
             description=cr.description or ci.description,
             category=cr.category,
+            carrier_number=cr.number,
+            contractor_number=ci.number,
             unit=cr.unit or ci.unit,
             carrier_quantity=cr.quantity,
             contractor_quantity=ci.quantity,

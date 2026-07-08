@@ -58,7 +58,7 @@
       <p class="muted-note">In the contractor scope, absent from the carrier estimate. Grouped by category, largest RCV first. RCV is the value printed in the contractor estimate.</p>
       <div class="rec-table-wrap">
         <table class="lineitems" id="missingTable">
-          <thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th class="num">RCV (from estimate)</th></tr></thead>
+          <thead><tr><th class="num">#</th><th>Item</th><th class="num">Qty</th><th>Unit</th><th class="num">RCV (from estimate)</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -70,6 +70,7 @@
       <div class="rec-table-wrap">
         <table class="lineitems" id="sharedTable">
           <thead><tr>
+            <th class="num">Carrier #</th><th class="num">Contr. #</th>
             <th>Category</th><th>Item</th>
             <th class="num">Carrier qty</th><th class="num">Contr. qty</th><th class="num">&Delta; qty</th>
             <th class="num">Carrier $/u</th><th class="num">Contr. $/u</th><th class="num">&Delta; $/u</th>
@@ -135,12 +136,12 @@
     if (!missing.length) {
       const tr = document.createElement('tr');
       const td = cell('No missing line items detected.', 'rec-empty');
-      td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
+      td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr);
       return;
     }
     // backend returns items pre-sorted by (category, -rcv); insert a header +
     // subtotal row whenever the category changes.
-    let cat = null, catRows = [], catTotal = 0, headerCell = null;
+    let cat = null, catTotal = 0, headerCell = null;
     function flush() {
       if (headerCell) headerCell.textContent = cat + '  ·  ' + money(catTotal);
     }
@@ -151,12 +152,13 @@
         const htr = document.createElement('tr');
         htr.className = 'rec-cat-head';
         headerCell = document.createElement('td');
-        headerCell.colSpan = 4;
+        headerCell.colSpan = 5;
         htr.appendChild(headerCell);
         tb.appendChild(htr);
       }
       catTotal += Number(m.rcv || 0);
       const tr = document.createElement('tr');
+      tr.appendChild(cell(m.number || '', 'num'));
       tr.appendChild(cell(m.description));
       tr.appendChild(cell(num(m.quantity), 'num'));
       tr.appendChild(cell(m.unit));
@@ -173,11 +175,13 @@
     if (!shared.length) {
       const tr = document.createElement('tr');
       const td = cell('No shared line items matched between the two estimates.', 'rec-empty');
-      td.colSpan = 11; tr.appendChild(td); tb.appendChild(tr);
+      td.colSpan = 13; tr.appendChild(td); tb.appendChild(tr);
       return;
     }
     shared.forEach(s => {
       const tr = document.createElement('tr');
+      tr.appendChild(cell(s.carrier_number || '', 'num'));
+      tr.appendChild(cell(s.contractor_number || '', 'num'));
       tr.appendChild(cell(s.category));
       tr.appendChild(cell(s.description));
       tr.appendChild(cell(num(s.carrier_quantity), 'num'));

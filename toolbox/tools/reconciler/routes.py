@@ -155,6 +155,7 @@ def run():
         md_path, csv_path = write_report(recon, _upload_dir())
 
         missing = [{
+            "number": s.number,       # line number in the contractor estimate
             "category": s.category,
             "description": s.description,
             "quantity": s.quantity,
