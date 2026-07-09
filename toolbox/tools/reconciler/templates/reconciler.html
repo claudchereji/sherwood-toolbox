@@ -206,9 +206,9 @@
     tile(5, 'Current carrier RCV', money(e.carrier_grand), '');
     tile(6, 'Contractor RCV', money(e.contractor_grand), '');
     $('totalsRow2').style.display = '';
-    $('markupNote').textContent = 'Approved items are checked in blue on the carrier pages; outstanding scope is painted in green by section. Open the summary page first.';
+    $('markupNote').textContent = 'Approved items are checked in green on the carrier pages; outstanding scope is painted in blue by section. Open the summary page first.';
     stat('A', count(c.missing), 'outstanding items', money(c.missing_dollars) + ', ' + count(c.missing_painted) + ' painted in place');
-    stat('B', count(e.won_tagged), 'approved wins tagged', 'checked in blue');
+    stat('B', count(e.won_tagged), 'approved wins tagged', 'checked in green');
     stat('C', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' highlighted' : 'none under-measured');
   }
   function renderRecoverable(data) {
@@ -219,7 +219,7 @@
     tile(2, 'Contractor RCV', money(data.contractor.grand_rcv), data.contractor.name);
     tile(3, 'Total RCV gap', money(data.gap), 'contractor minus carrier');
     $('totalsRow2').style.display = 'none';
-    $('markupNote').textContent = 'Missing scope is painted in green by section; under-measured lines are highlighted in place. Open the summary page first.';
+    $('markupNote').textContent = 'Missing scope is painted in salmon by section; under-measured lines are highlighted in place. Open the summary page first.';
     stat('A', count(c.missing), 'missing line items', c.missing_dollars ? money(c.missing_dollars) + ' in scope, ' + count(c.missing_painted) + ' painted' : '');
     stat('B', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' of ' + count(c.flagged) + ' highlighted' : 'none under-measured');
     stat('C', count(c.added_pages), 'summary pages added', '');

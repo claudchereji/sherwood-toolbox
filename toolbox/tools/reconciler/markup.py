@@ -42,16 +42,44 @@ LINE = (0.80, 0.84, 0.76)        # --line  #cdd6c2
 SAGE = (0.93, 0.95, 0.90)        # --sage-50 #eef1e6
 WHITE = (1, 1, 1)
 
-# Painted-in outstanding scope: a clear "add this" green, distinct from the warm
-# under-measured band colours, on an opaque pale-green row so it reads as an
-# insertion over the carrier's own content.
-ADD = (0.16, 0.52, 0.29)
-ADD_BG = (0.90, 0.96, 0.90)
+# Report palette (hex from the spec). Missing scope the carrier omits entirely
+# (two-file mode) is salmon; outstanding scope still worth pursuing (three-file
+# mode) is blue; approved wins are green. These three carry the meaning; the rest
+# are neutrals and a warm under-measured scale chosen to stay clear of them.
+MISSING = (0.961, 0.592, 0.588)      # #F59796
+OUTSTANDING = (0.204, 0.322, 0.718)  # #3452B7
+APPROVED = (0.000, 0.565, 0.278)     # #009047
 
-# Approved wins: supplement items the carrier has since picked up. Marked with a
-# blue check tab and a faint blue band, so a win reads apart from an under-
-# measured line (warm) and from outstanding scope (green).
-WON = (0.13, 0.40, 0.70)
+
+def _tint(rgb, t=0.88):
+    """A pale wash of an accent for opaque row backgrounds (blend toward white)."""
+    return tuple(round(c + (1 - c) * t, 3) for c in rgb)
+
+
+def _darken(rgb, k=0.52):
+    """A darkened accent, readable as body text on that accent's pale tint."""
+    return tuple(round(c * k, 3) for c in rgb)
+
+
+def _readable_on(rgb):
+    """White or near-black text, whichever reads on a solid fill of `rgb`."""
+    lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+    return WHITE if lum < 0.6 else (0.16, 0.10, 0.10)
+
+
+class Scheme:
+    """The four tones a painted-scope block needs: a solid header colour, a pale
+    row fill, body text, and text that reads on the header."""
+
+    def __init__(self, accent):
+        self.accent = accent
+        self.tint = _tint(accent)
+        self.text = _darken(accent)
+        self.head_text = _readable_on(accent)
+
+
+MISSING_SCHEME = Scheme(MISSING)          # two-file mode: what the carrier omits
+OUTSTANDING_SCHEME = Scheme(OUTSTANDING)  # three-file mode: asked, not yet approved
 
 # Warning accent for the coverage-sublimit caution.
 WARN = (0.54, 0.29, 0.09)
@@ -68,10 +96,12 @@ class Severity:
     floor: float     # dollar impact at or above which this level applies
 
 
+# Under-measured quantity gaps use a warm orange->gold scale, kept clear of the
+# salmon (missing) / blue (outstanding) / green (approved) meanings above.
 SEVERITIES = (
-    Severity("major", (0.86, 0.24, 0.20), 2000.0),    # red
-    Severity("moderate", (0.90, 0.56, 0.15), 1000.0),  # amber
-    Severity("minor", (0.85, 0.72, 0.15), 0.0),        # yellow
+    Severity("major", (0.90, 0.45, 0.13), 2000.0),    # burnt orange
+    Severity("moderate", (0.94, 0.64, 0.20), 1000.0),  # amber
+    Severity("minor", (0.90, 0.78, 0.28), 0.0),        # gold
 )
 
 
@@ -215,16 +245,16 @@ def flag_row(page, rect, marker: int, sev: Severity):
 
 
 def tag_won(page, rect):
-    """Mark a carrier line the carrier approved from our supplement: a faint blue
-    band and a blue check tab in the left margin."""
+    """Mark a carrier line the carrier approved from our supplement: a faint green
+    band and a green check tab in the left margin."""
     w = page.rect.width
     band = fitz.Rect(BAND_INSET, rect.y0 - 1.5, w - BAND_INSET, rect.y1 + 1.5)
-    page.draw_rect(band, color=None, fill=WON, fill_opacity=0.14)
+    page.draw_rect(band, color=None, fill=APPROVED, fill_opacity=0.16)
     page.draw_line(fitz.Point(BAND_INSET, band.y0), fitz.Point(BAND_INSET, band.y1),
-                   color=WON, width=1.4)
+                   color=APPROVED, width=1.4)
     if rect.x0 >= FLAG_R + 2:
         tab = fitz.Rect(FLAG_L, rect.y0 - 1.0, FLAG_R, rect.y1 + 1.0)
-        page.draw_rect(tab, color=None, fill=WON, fill_opacity=1.0, radius=0.25)
+        page.draw_rect(tab, color=None, fill=APPROVED, fill_opacity=1.0, radius=0.25)
         # a checkmark drawn from two segments (the Base-14 fonts have no check glyph)
         cy = (rect.y0 + rect.y1) / 2
         page.draw_line(fitz.Point(FLAG_L + 6, cy + 1), fitz.Point(FLAG_L + 9, cy + 3.5),
@@ -246,31 +276,31 @@ def _right(page, x_right, base, s, font, size, color):
                      color=color)
 
 
-def _paint_add_row(page, x0, x1, y, num, desc, qty, rcv):
-    """One opaque pale-green insertion row: green left rule, the supplement line
-    number, the description, quantity, and RCV. Opaque so it reads cleanly wherever
-    it lands on the carrier page."""
-    page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_ROW_H), color=None, fill=ADD_BG,
+def _paint_add_row(page, x0, x1, y, num, desc, qty, rcv, sch):
+    """One opaque insertion row in the scheme's colours: a coloured left rule, the
+    supplement line number, description, quantity, and RCV. Opaque so it reads
+    cleanly wherever it lands on the carrier page."""
+    page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_ROW_H), color=None, fill=sch.tint,
                    fill_opacity=1.0)
-    page.draw_line(fitz.Point(x0, y), fitz.Point(x0, y + ADD_ROW_H), color=ADD, width=2)
+    page.draw_line(fitz.Point(x0, y), fitz.Point(x0, y + ADD_ROW_H), color=sch.accent, width=2)
     base = y + 8.2
     rcv_w, qty_w, num_w = 66.0, 58.0, 26.0
     num_x = x0 + 6
     desc_x = num_x + num_w
     desc_right = x1 - rcv_w - qty_w - 8
     page.insert_text(fitz.Point(num_x, base), f"#{num}" if num else "",
-                     fontname="hebo", fontsize=8, color=ADD)
+                     fontname="hebo", fontsize=8, color=sch.accent)
     page.insert_text(fitz.Point(desc_x, base), _fit(desc, "helv", 8, desc_right - desc_x),
-                     fontname="helv", fontsize=8, color=GREEN)
-    _right(page, x1 - rcv_w - 4, base, qty, "helv", 8, GREEN)
-    _right(page, x1 - 4, base, rcv, "hebo", 8, GREEN)
+                     fontname="helv", fontsize=8, color=sch.text)
+    _right(page, x1 - rcv_w - 4, base, qty, "helv", 8, sch.text)
+    _right(page, x1 - 4, base, rcv, "hebo", 8, sch.text)
 
 
-def paint_block(page, label, items, start_y):
-    """Paint one section's outstanding items onto the page, starting at `start_y`
-    (below the anchor line). Returns (bottom_y, rows_painted). Rows that will not
-    fit above the footer are summarised in a final "+N more" line pointing to the
-    back-of-document list."""
+def paint_block(page, label, items, start_y, sch):
+    """Paint one section's items onto the page in the scheme's colours, starting at
+    `start_y` (below the anchor line). Returns (bottom_y, rows_painted). Rows that
+    will not fit above the footer are summarised in a final "+N more" line pointing
+    to the back-of-document list."""
     x0, x1 = BAND_INSET, page.rect.width - BAND_INSET
     max_y = page.rect.height - ADD_BOTTOM_PAD
     subtotal = round(sum(s.dollars for s in items), 2)
@@ -283,34 +313,34 @@ def paint_block(page, label, items, start_y):
 
     # Room for a marker but not a full row: leave a one-line in-context marker.
     if y + ADD_HEADER_H + ADD_ROW_H > max_y:
-        page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_HEADER_H), color=None, fill=ADD,
+        page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_HEADER_H), color=None, fill=sch.accent,
                        fill_opacity=1.0)
         page.insert_text(fitz.Point(x0 + 6, y + 8.7),
                          f"+ ADD {len(items)} items in {label} ({_money(subtotal)}) - "
-                         f"see the back", fontname="hebo", fontsize=7.5, color=WHITE)
+                         f"see the back", fontname="hebo", fontsize=7.5, color=sch.head_text)
         return y + ADD_HEADER_H, 0
 
-    page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_HEADER_H), color=None, fill=ADD,
+    page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_HEADER_H), color=None, fill=sch.accent,
                    fill_opacity=1.0)
     page.insert_text(fitz.Point(x0 + 6, y + 8.7), f"+ SCOPE TO ADD - {label}",
-                     fontname="hebo", fontsize=7.5, color=WHITE)
+                     fontname="hebo", fontsize=7.5, color=sch.head_text)
     y += ADD_HEADER_H
 
     fit = int((max_y - y) // ADD_ROW_H)
     show = items if len(items) <= fit else items[:max(fit - 1, 1)]
     for s in show:
         _paint_add_row(page, x0, x1, y, s.number, s.description,
-                       f"{_qty(s.quantity)} {s.unit}".strip(), _money(s.dollars))
+                       f"{_qty(s.quantity)} {s.unit}".strip(), _money(s.dollars), sch)
         y += ADD_ROW_H
     remaining = len(items) - len(show)
     if remaining > 0:
         rem_dollars = round(sum(s.dollars for s in items[len(show):]), 2)
-        page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_ROW_H), color=None, fill=ADD_BG,
+        page.draw_rect(fitz.Rect(x0, y, x1, y + ADD_ROW_H), color=None, fill=sch.tint,
                        fill_opacity=1.0)
-        page.draw_line(fitz.Point(x0, y), fitz.Point(x0, y + ADD_ROW_H), color=ADD, width=2)
+        page.draw_line(fitz.Point(x0, y), fitz.Point(x0, y + ADD_ROW_H), color=sch.accent, width=2)
         page.insert_text(fitz.Point(x0 + 8, y + 8.2),
                          f"+ {remaining} more in {label} ({_money(rem_dollars)}) - "
-                         f"full list at the back", fontname="helv", fontsize=8, color=ADD)
+                         f"full list at the back", fontname="helv", fontsize=8, color=sch.text)
         y += ADD_ROW_H
     return y, len(show)
 
@@ -333,10 +363,11 @@ def _anchor_for_section(sec, carrier_secs, fallback):
     return best if best is not None else fallback
 
 
-def paint_outstanding_by_section(doc, missing, located_all, sec_of):
-    """Paint outstanding items onto the carrier pages, grouped by their supplement
-    section and anchored below the matching carrier section. Blocks on one page
-    stack rather than overlap. Returns the number of items painted as full rows."""
+def paint_outstanding_by_section(doc, missing, located_all, sec_of, sch):
+    """Paint outstanding items onto the carrier pages in the scheme's colours,
+    grouped by their supplement section and anchored below the matching carrier
+    section. Blocks on one page stack rather than overlap. Returns the number of
+    items painted as full rows."""
     if not missing or not located_all:
         return 0
 
@@ -362,7 +393,7 @@ def paint_outstanding_by_section(doc, missing, located_all, sec_of):
         pno, rect = _anchor_for_section(sec, carrier_secs, fallback)
         page = doc.load_page(pno)
         start_y = max(rect.y1 + 2.5, page_cursor.get(pno, 0.0))
-        bottom, n = paint_block(page, sec, groups[sec], start_y)
+        bottom, n = paint_block(page, sec, groups[sec], start_y, sch)
         page_cursor[pno] = bottom + 3
         painted += n
     return painted
@@ -595,10 +626,10 @@ def _summary_effectiveness(c, recon, flagged, missing, located_count, painted_co
     c.rule()
     c.subheading("What the markup shows")
     c.text(f"-  {won_count} of your supplement items have been approved: the carrier "
-           f"picked them up since the original estimate. They are checked in blue on "
+           f"picked them up since the original estimate. They are checked in green on "
            f"the carrier pages.", size=10, gap=6)
     c.text(f"-  {len(missing)} items are still outstanding; {painted_count} are "
-           f"painted in green onto the carrier pages, grouped by their section and "
+           f"painted in blue onto the carrier pages, grouped by their section and "
            f"keyed by supplement line number. The full list is under "
            f'"Outstanding scope" at the back.', size=10, gap=6)
     _flagged_line(c, flagged, located_count)
@@ -624,7 +655,7 @@ def _summary_recoverable(c, recon, flagged, missing, located_count, painted_coun
     c.subheading("What the markup shows")
     c.text(f"-  {len(missing)} line items totalling {_money(missing_dollars)} are in "
            f"the contractor scope and absent from this estimate; {painted_count} are "
-           f"painted onto the carrier pages in green, grouped by section. The full "
+           f"painted onto the carrier pages in salmon, grouped by section. The full "
            f'list is under "Missing scope" at the back.', size=10, gap=6)
     _flagged_line(c, flagged, located_count)
     _legend(c, effectiveness=False)
@@ -646,12 +677,16 @@ def _legend(c, effectiveness):
     c.subheading("Legend")
     if effectiveness:
         _legend_check(c, "Approved: your supplement item the carrier has picked up")
-    _legend_row(c, ADD, "Scope to add: outstanding, not yet in the carrier", opacity=1.0)
+        _legend_row(c, OUTSTANDING, "Outstanding scope: asked for, not yet in the carrier",
+                    opacity=1.0)
+    else:
+        _legend_row(c, MISSING, "Missing scope: in the contractor estimate, not the carrier",
+                    opacity=1.0)
     _legend_row(c, SEVERITIES[0].fill, "Under-measured line, major gap ($2,000 or more short)")
     _legend_row(c, SEVERITIES[1].fill, "Under-measured line, moderate gap ($1,000 to $2,000 short)")
     _legend_row(c, SEVERITIES[2].fill, "Under-measured line, minor gap (under $1,000 short)")
-    c.text("A tab in the left margin marks each highlighted line; green blocks carry "
-           "the supplement line number.", size=8.5, color=MUTED, gap=6)
+    c.text("A tab in the left margin marks each highlighted line; the coloured "
+           "blocks carry the supplement line number.", size=8.5, color=MUTED, gap=6)
 
 
 def _summary_footer(c, recon):
@@ -677,7 +712,7 @@ def _legend_check(c, label):
     c.space(16)
     top = c.y
     sw = fitz.Rect(MARGIN, top + 1, MARGIN + 22, top + 12)
-    c.page.draw_rect(sw, color=None, fill=WON, fill_opacity=1.0)
+    c.page.draw_rect(sw, color=None, fill=APPROVED, fill_opacity=1.0)
     cy = top + 6.5
     c.page.draw_line(fitz.Point(MARGIN + 6, cy + 1), fitz.Point(MARGIN + 9, cy + 3.5),
                      color=WHITE, width=1.3)
@@ -736,10 +771,12 @@ def _detail_pages(doc, recon, flagged, missing, page_of):
     # --- Outstanding / missing scope, grouped by section (matches the painting) ---
     c.rule(gap=12)
     c.heading("Outstanding scope" if eff else "Missing scope")
-    c.text(("Your supplement items the carrier has not yet approved. " if eff else
-            "In the contractor scope, absent from the carrier estimate. ") +
-           "Painted in green onto the carrier pages by section; this is the complete "
-           "list, grouped by supplement section. The # is the supplement line number.",
+    c.text(("Your supplement items the carrier has not yet approved, painted in blue. "
+            if eff else
+            "In the contractor scope, absent from the carrier estimate, painted in "
+            "salmon. ") +
+           "Each is on the carrier pages by section; this is the complete list, "
+           "grouped by supplement section. The # is the supplement line number.",
            size=9, color=MUTED, gap=8)
     if missing:
         cols = [34, 250, 66, 40, 78]
@@ -775,7 +812,7 @@ def _approved_section(c, recon):
     c.heading("Approved wins")
     c.text(f"Line items in the current carrier estimate that were not in the "
            f"original: {_money(recon.approved_dollars)} of scope won to date. These "
-           f"are checked in blue on the carrier pages.", size=9, color=MUTED, gap=8)
+           f"are checked in green on the carrier pages.", size=9, color=MUTED, gap=8)
     if not wins:
         c.text("None matched: no new line items were found versus the original "
                "carrier estimate.", size=9.5, color=MUTED)
@@ -783,7 +820,7 @@ def _approved_section(c, recon):
     cols = [34, 300, 56, 40, 78]
     aligns = [1, 0, 2, 0, 2]
     c.row(["#", "Item", "Qty", "Unit", "RCV"], cols, head=True, size=8.5,
-          color=WON, fill=SAGE, aligns=aligns)
+          color=APPROVED, fill=SAGE, aligns=aligns)
     for w in sorted(wins, key=lambda x: -x.rcv):
         c.row([str(w.number or ""), w.description, _qty(w.quantity), w.unit,
                _money(w.rcv)], cols, size=8.5, aligns=aligns)
@@ -896,8 +933,11 @@ def mark_up_carrier(carrier, recon, out_path: str) -> dict:
             tag_won(doc.load_page(loc[0]), loc[1])
             won_count += 1
 
-    # Paint the outstanding scope onto the carrier pages, in its own section.
-    painted = paint_outstanding_by_section(doc, missing, located_all, sec_of)
+    # Paint the missing/outstanding scope onto the carrier pages, in its own
+    # section. Salmon when there is no original estimate (scope the carrier omits),
+    # blue when there is (scope still to pursue).
+    sch = OUTSTANDING_SCHEME if recon.mode == "effectiveness" else MISSING_SCHEME
+    painted = paint_outstanding_by_section(doc, missing, located_all, sec_of, sch)
 
     # A located item's final 1-based page = its original index, + 1 for the single
     # summary page prepended below, + 1 to make it 1-based. Appending the detail

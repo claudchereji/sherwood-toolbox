@@ -363,8 +363,8 @@ def build_narrative(recon):
             f"so far ({prog}, {pct}%), and {_money0(recon.outstanding_dollars)} is still on "
             f"the table."})
         out.append({"tone": "normal", "text":
-            f"{won} of your added items are now in the carrier's estimate; {out_count} are "
-            f"still outstanding and painted in green on the pages that follow."})
+            f"{won} of your added items are now in the carrier's estimate (checked in green); "
+            f"{out_count} are still outstanding and painted in blue on the pages that follow."})
         if clh:
             out.append({"tone": "caution", "text":
                 f"Before chasing the rest: {_money0(clh.dollars)} of what's outstanding is on "
@@ -382,7 +382,7 @@ def build_narrative(recon):
             f"{_money0(recon.carrier_grand)}, a gap of {_money0(gap)}."})
         out.append({"tone": "normal", "text":
             f"{len(miss)} line items worth {_money0(miss_d)} are in your scope but missing "
-            f"from the carrier's, painted in green on the carrier pages. {flagged} shared "
+            f"from the carrier's, painted in salmon on the carrier pages. {flagged} shared "
             f"lines are measured higher by the contractor."})
         if clh:
             out.append({"tone": "caution", "text":
