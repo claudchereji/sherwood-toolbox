@@ -6,7 +6,7 @@ Two modes:
                    and the RCV difference between the two files is bridged with an
                    exact identity (see rcv_bridge).
   * estimated   -> no contractor file. The playbook checklist of commonly-added
-                   items projects the likely-missing scope and O&P.
+                   items projects the missing scope and O&P.
 
 Suggestion tiers:
   MISSING      contractor item absent from carrier (reconciled mode, high conf)
@@ -262,10 +262,11 @@ def _money0(x):
 
 
 def coverage_limit_hypothesis(carrier, contractor, missing, og=None):
-    """Predict when a dwelling-extension / other-structures sublimit may cap the
-    payout, so pushing for more approvals on the secondary structure does not help
-    (and can hurt) the homeowner. Mathematically grounded on the structure split
-    and, when the original estimate is present, the divergent approval rate.
+    """Raise a policy-limit caution whenever a secondary structure (a detached
+    building, shed, or garage) has denied or unapproved scope. A dwelling-extension
+    / other-structures limit is separate from the main dwelling limit, so scope
+    pushed past it does not raise the payout. Grounded on the structure split and,
+    when the original estimate is present, the divergent approval rate.
 
     Returns a DenialHypothesis or None. Never asserts the limit (it lives on the
     declarations, not the estimate); it is always a labelled inference to verify.
@@ -279,8 +280,16 @@ def coverage_limit_hypothesis(carrier, contractor, missing, og=None):
     # that structure less what the carrier already carries there.
     ext_outstanding = round(max(0.0, xs["ext_rcv"] - cs["ext_rcv"]), 2)
     has_sublimit = bool(carrier.sublimit_coverages)
-    has_ext = cs["ext_rcv"] > 0 or xs["ext_rcv"] > 0
-    if not has_ext and not has_sublimit:
+
+    # Fire on any secondary-structure denial: a missing/unapproved item on such a
+    # structure, or outstanding dollars there. A separate limit can quietly cap the
+    # payout even on a small partial denial, so the caution is worth raising early.
+    def _dollars(m):
+        v = getattr(m, "dollars", None)
+        return (getattr(m, "rcv", 0.0) if v is None else v) or 0.0
+    ext_missing_rcv = round(sum(_dollars(m) for m in ext_missing), 2)
+    amount = ext_outstanding if ext_outstanding >= 1 else ext_missing_rcv
+    if not ext_missing and amount < 1 and not has_sublimit:
         return None
 
     # Divergent approval rate on the secondary structure (needs the original).
@@ -298,36 +307,36 @@ def coverage_limit_hypothesis(carrier, contractor, missing, og=None):
                 (dwl_rate is None or dwl_rate - ext_rate >= 0.20):
             frozen = True
             rate_note = (
-                f"The carrier approved "
-                f"{(dwl_rate * 100):.0f}% of your dwelling ask but "
-                f"{(ext_rate * 100):.0f}% of your secondary-structure ask "
+                f"The carrier approved {(dwl_rate * 100):.0f}% of the dwelling ask but "
+                f"{(ext_rate * 100):.0f}% of the secondary-structure ask "
                 f"({_money0(ext_appr)} of {_money0(ext_ask)}); its secondary-structure "
                 f"total has not moved from the original estimate. ")
 
-    # Gate: only raise this when there is real exposure or a clear frozen signal.
-    if not frozen and ext_outstanding < 1500:
-        return None
-
     sub = carrier.sublimit_coverages[0] if has_sublimit else ""
-    cap_phrase = (f"the {sub} coverage" if sub else
-                  "a dwelling-extension or other-structures sublimit")
-    note = (
-        rate_note +
-        f"That structure sits under {cap_phrase}, a separate limit set at 10% of the "
-        f"Coverage A dwelling limit on standard homeowner forms, and carries "
-        f"{_money0(cs['ext_dep'])} of depreciation held until the work is done. "
-        f"{_money0(ext_outstanding)} of the outstanding scope is on it. Past that "
-        f"limit, added scope does not raise the payout, the depreciation above it is "
-        f"unrecoverable, and the settlement on the structure drops to ACV. Confirm "
-        f"the remaining limit before pursuing this scope.")
+    base = (
+        f"{_money0(amount)} of the missing scope is on a secondary structure "
+        f"(a detached building, shed, or garage). Check the policy for a separate "
+        f"limit on that structure; a dwelling-extension or other-structures limit is "
+        f"set at 10% of the Coverage A dwelling limit on standard homeowner forms. If "
+        f"that limit applies, scope pushed past it does not raise the payout, so "
+        f"confirm the remaining limit before pursuing those items.")
+    extra = ""
+    if has_sublimit:
+        extra = (f" This estimate carries a separate {sub} coverage and holds "
+                 f"{_money0(cs['ext_dep'])} of depreciation until the work is done; "
+                 f"scope past the limit drops that structure's settlement to actual "
+                 f"cash value, lowering the homeowner's net.")
+    note = rate_note + base + extra
 
-    label = ("Sublimit reached - confirm" if frozen else "Sublimit in play - confirm")
+    label = ("Sublimit reached - confirm" if frozen else
+             "Sublimit in play - confirm" if has_sublimit else
+             "Check the policy limit")
     return DenialHypothesis(
         theme="COVERAGE_LIMIT", basis="inference", label=label,
         statement=(f"Estimate carries a separate {sub} coverage." if sub else ""),
         item_numbers=[m.number for m in ext_missing],
         item_descriptions=[m.description for m in ext_missing],
-        dollars=ext_outstanding, note=note)
+        dollars=amount, note=note)
 
 
 # --------------------------------------------------------------------------- #
@@ -347,40 +356,44 @@ def build_narrative(recon):
         won = len(recon.approved_wins)
         out_count = sum(1 for s in recon.suggestions if s.status == "MISSING")
         out.append({"tone": "normal", "text":
-            f"The contractor supplement adds {_money0(recon.ask_dollars)} of scope to the "
-            f"carrier's original estimate. The carrier has picked up {_money0(recon.approved_dollars)}, "
-            f"{pct}% of it. {_money0(recon.outstanding_dollars)} of scoped work is still out."})
+            f"The contractor supplement is {_money0(recon.ask_dollars)} higher than the "
+            f"carrier's original estimate. The carrier has approved {_money0(recon.approved_dollars)} "
+            f"so far, or {pct}% of it. {_money0(recon.outstanding_dollars)} of scoped work is "
+            f"still unapproved."})
         out.append({"tone": "normal", "text":
-            f"{won} supplement items are now in the carrier estimate, checked in green. "
-            f"{out_count} are missing and painted in blue on the carrier pages, each keyed "
-            f"to the contractor line that carries it."})
+            f"{won} supplement items have been approved into the carrier estimate, checked in "
+            f"green. {out_count} are still missing, painted in blue on the carrier pages, each "
+            f"keyed to the contractor line that carries it."})
         if clh:
-            out.append({"tone": "caution", "text":
-                f"One caution before pushing the rest. {_money0(clh.dollars)} of the outstanding "
-                f"scope is on a secondary structure the carrier caps under a separate limit that "
-                f"is already spent. Approvals there do not raise the payout; they drop that "
-                f"structure to ACV and cut the homeowner's net. Confirm the limit first."})
+            out.append({"tone": "caution", "text": _secondary_caution(clh)})
     else:
         gap = round(recon.contractor_grand - recon.carrier_grand, 2)
         miss = [s for s in recon.suggestions if s.status == "MISSING"]
         miss_d = round(sum(s.dollars for s in miss), 2)
         flagged = sum(1 for s in recon.shared if s.quantity_delta > 1e-6)
         out.append({"tone": "normal", "text":
-            f"The contractor scopes {_money0(recon.contractor_grand)} of work. The carrier "
-            f"estimate stops at {_money0(recon.carrier_grand)}, short {_money0(gap)}."})
+            f"The contractor estimate is {_money0(gap)} higher than the carrier's, "
+            f"{_money0(recon.contractor_grand)} against {_money0(recon.carrier_grand)}."})
         line2 = (f"{len(miss)} line items worth {_money0(miss_d)} are in the contractor estimate "
-                 f"and absent from the carrier's, painted in salmon on the carrier pages and "
+                 f"and missing from the carrier's, painted in salmon on the carrier pages and "
                  f"keyed to the contractor line number.")
         if flagged:
             line2 += (f" The carrier also measured {flagged} shared "
                       f"line{'s' if flagged != 1 else ''} short of the contractor.")
         out.append({"tone": "normal", "text": line2})
         if clh:
-            out.append({"tone": "caution", "text":
-                f"One caution. {_money0(clh.dollars)} of the missing scope is on a secondary "
-                f"structure the carrier caps under a separate limit. Past that limit the added "
-                f"scope does not pay. Confirm the limit before pursuing it."})
+            out.append({"tone": "caution", "text": _secondary_caution(clh)})
     recon.narrative = out
+
+
+def _secondary_caution(clh):
+    """The plain-language secondary-structure policy-limit caution, from the
+    coverage-limit hypothesis. Fires on any denied secondary-structure scope."""
+    return (
+        f"One caution. {_money0(clh.dollars)} of the missing scope is on a secondary "
+        f"structure (a detached building, shed, or garage). If the policy caps that "
+        f"structure with a separate limit, scope pushed past the limit does not raise "
+        f"the payout. Check the remaining limit before pursuing those items.")
 
 
 # --------------------------------------------------------------------------- #

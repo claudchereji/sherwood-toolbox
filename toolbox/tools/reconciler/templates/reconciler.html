@@ -162,7 +162,7 @@
           const o = document.createElement('option');
           o.value = f.id; o.dataset.name = f.title;
           const meta = [f.size, f.updated].filter(Boolean).join('  ·  ');
-          o.textContent = f.title + (meta ? '   —   ' + meta : '');
+          o.textContent = f.title + (meta ? '   ·   ' + meta : '');
           og.appendChild(o);
         });
         sel.appendChild(og);
@@ -176,7 +176,7 @@
         sel.style.display = '';
         $(slot === 'carrier' ? 'carrierInput' : slot === 'contractor' ? 'contractorInput' : 'ogInput').value = '';
       });
-      $('crmStatus').textContent = (label ? label + ' — ' : '') + d.files.length +
+      $('crmStatus').textContent = (label ? label + ': ' : '') + d.files.length +
         ' documents. The three slots below are pre-filled; adjust any that are wrong.';
     } catch (e) { $('crmStatus').textContent = 'Could not load documents: ' + e.message; }
   }
@@ -199,16 +199,16 @@
     const e = data.effectiveness, c = data.counts || {};
     $('headLabel').textContent = 'Approval effectiveness';
     $('headValue').textContent = Math.round((e.rate || 0) * 100) + '%';
-    tile(1, 'Won to date', signedMoney(e.approved), 'original to current');
-    tile(2, 'Still outstanding', money(e.outstanding), 'asked, not yet approved');
-    tile(3, 'Your supplement (ask)', money(e.ask), '');
+    tile(1, 'Approved to date', signedMoney(e.approved), 'original to current');
+    tile(2, 'Still unapproved', money(e.outstanding), 'asked, not yet approved');
+    tile(3, 'Contractor over original', money(e.ask), '');
     tile(4, 'Original carrier RCV', money(e.og_grand), '');
     tile(5, 'Current carrier RCV', money(e.carrier_grand), '');
     tile(6, 'Contractor RCV', money(e.contractor_grand), '');
     $('totalsRow2').style.display = '';
-    $('markupNote').textContent = 'Approved items are checked in green on the carrier pages; outstanding scope is painted in blue by section. Open the summary page first.';
-    stat('A', count(c.missing), 'outstanding items', money(c.missing_dollars) + ', ' + count(c.missing_painted) + ' painted in place');
-    stat('B', count(e.won_tagged), 'approved wins tagged', 'checked in green');
+    $('markupNote').textContent = 'Approved items are checked in green on the carrier pages; unapproved scope is painted in blue by section. Open the summary page first.';
+    stat('A', count(c.missing), 'unapproved items', money(c.missing_dollars) + ', ' + count(c.missing_painted) + ' painted in place');
+    stat('B', count(e.won_tagged), 'approved items tagged', 'checked in green');
     stat('C', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' highlighted' : 'none under-measured');
   }
   function renderRecoverable(data) {
@@ -259,7 +259,7 @@
     const hasCarrier = appendSlot(fd, 'carrier', 'carrierInput');
     const hasContractor = appendSlot(fd, 'contractor', 'contractorInput');
     appendSlot(fd, 'og', 'ogInput');
-    if (!hasCarrier || !hasContractor) { alert('Provide a current carrier estimate and a contractor supplement — upload a file or pick a CRM document for each.'); return; }
+    if (!hasCarrier || !hasContractor) { alert('Provide a current carrier estimate and a contractor supplement. Upload a file or pick a CRM document for each.'); return; }
 
     $('results').style.display = 'none';
     $('loading').style.display = 'block';

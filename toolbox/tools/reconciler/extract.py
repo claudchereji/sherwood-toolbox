@@ -708,8 +708,12 @@ EXT_DESC = re.compile(
 
 def is_extension_item(section: str, description: str) -> bool:
     """True when a line item belongs to a secondary structure a dwelling-extension
-    / other-structures sublimit covers, rather than the main dwelling."""
-    return bool(EXT_SECTION.search(section or "") or EXT_DESC.search(description or ""))
+    / other-structures sublimit covers, rather than the main dwelling. The structure
+    name (barn, shed, detached garage) is matched in either the section or the
+    description; metal-building materials count only in the description."""
+    sec, desc = section or "", description or ""
+    return bool(EXT_SECTION.search(sec) or EXT_SECTION.search(desc)
+                or EXT_DESC.search(desc))
 
 
 # A separate, smaller coverage the estimate carves out: State Farm's "Dwelling

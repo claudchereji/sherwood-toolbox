@@ -638,10 +638,10 @@ def _summary_effectiveness(c, recon, flagged, missing, located_count, painted_co
 
     pct = f"{recon.effectiveness * 100:.0f}%"
     _headline_box(c, "APPROVAL EFFECTIVENESS", pct,
-                  f"of your {_money(recon.ask_dollars)} supplement approved so far")
+                  f"of the {_money(recon.ask_dollars)} the contractor is over the original")
 
-    _totals3(c, ["Won to date (original -> current)", "Still outstanding",
-                 "Your supplement (ask)"],
+    _totals3(c, ["Approved to date (original to current)", "Still unapproved",
+                 "Contractor over original"],
              [_signed_money(recon.approved_dollars), _money(recon.outstanding_dollars),
               _money(recon.ask_dollars)])
     c.y += 6
@@ -654,12 +654,12 @@ def _summary_effectiveness(c, recon, flagged, missing, located_count, painted_co
 
     c.rule()
     c.subheading("What the markup shows")
-    c.text(f"-  {won_count} supplement items are approved: the carrier added them "
-           f"since its original estimate. Green check on the carrier pages.",
-           size=10, gap=6)
-    c.text(f"-  {len(missing)} items are still out: {painted_count} painted in blue on "
-           f"the carrier pages by section, keyed to the contractor line number. Full "
-           f'list under "Outstanding scope" at the back.', size=10, gap=6)
+    c.text(f"-  {won_count} supplement items have been approved: they are in the "
+           f"carrier's current estimate but not its original. Green check on the "
+           f"carrier pages.", size=10, gap=6)
+    c.text(f"-  {len(missing)} items are still unapproved: {painted_count} painted in "
+           f"blue on the carrier pages by section, keyed to the contractor line "
+           f'number. Full list under "Outstanding scope" at the back.', size=10, gap=6)
     _flagged_line(c, flagged, located_count)
     _legend(c, effectiveness=True)
 
@@ -710,7 +710,7 @@ def _legend(c, effectiveness):
     c.subheading("Legend")
     if effectiveness:
         _legend_check(c, "Approved: contractor scope now in the carrier estimate")
-        _legend_row(c, OUTSTANDING, "Outstanding: contractor scope the carrier has not added",
+        _legend_row(c, OUTSTANDING, "Outstanding: contractor scope the carrier has not approved",
                     opacity=1.0)
     else:
         _legend_row(c, MISSING, "Missing: contractor scope the carrier estimate omits",
@@ -843,10 +843,10 @@ def _detail_pages(doc, recon, flagged, missing, page_of):
 def _approved_section(c, recon):
     """Supplement items the carrier has approved since the original estimate."""
     wins = recon.approved_wins
-    c.heading("Approved wins")
-    c.text(f"Line items the carrier added since its original estimate: "
-           f"{_money(recon.approved_dollars)} of contractor scope now in the current "
-           f"estimate, checked in green on the carrier pages.", size=9, color=MUTED, gap=8)
+    c.heading("Approved items")
+    c.text(f"Line items in the carrier's current estimate that were not in its "
+           f"original: {_money(recon.approved_dollars)} of contractor scope approved, "
+           f"checked in green on the carrier pages.", size=9, color=MUTED, gap=8)
     if not wins:
         c.text("None. The carrier's current estimate matches its original line for "
                "line.", size=9.5, color=MUTED)
@@ -865,9 +865,9 @@ def _bridge_section(c, recon):
     if not b:
         return
     c.rule(gap=12)
-    c.heading("RCV build-up")
-    c.text("The carrier RCV built up to the contractor RCV, line by line. A residual "
-           "near zero means every dollar of the gap is accounted for.",
+    c.heading("RCV reconciliation")
+    c.text("How the carrier's RCV reconciles to the contractor's, line by line. A "
+           "residual near zero means every dollar of the gap is accounted for.",
            size=9, color=MUTED, gap=8)
     labels = [
         ("Carrier RCV", b.get("carrier_rcv")),
