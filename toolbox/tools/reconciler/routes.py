@@ -20,7 +20,7 @@ from werkzeug.utils import secure_filename
 from ...config import Config
 from . import crm, logbook, markup, match, playbook as playbook_mod
 from .extract import extract_estimate
-from .reconcile import reconcile_effectiveness, reconcile_matched
+from .reconcile import OG_MIN_PARSE_RATIO, reconcile_effectiveness, reconcile_matched
 
 bp = Blueprint(
     "reconciler",
@@ -122,6 +122,18 @@ def _claimant_from(contractor_name, carrier_name):
     return base
 
 
+# Signature line on any reconciliation error posted to the CRM, so a note on the
+# job reads as the bot's own message. Exact wording is fixed; it sits on its own
+# line below a blank line (see crm_error_note).
+ERROR_MESSENGER_SIGNATURE = "-- Reconciliation Bot Error Messenger"
+
+
+def _file_error(msg, status=422):
+    """A JSON error for a provided file the tool could not process. Flagged
+    `crm_postable` so the browser can offer to log the message on the CRM job."""
+    return jsonify({"error": msg, "crm_postable": True}), status
+
+
 def _image_only_error(og, carrier, contractor):
     """A blocking message when any provided file has no readable text layer. OCR
     is mothballed, so a scanned / image-only PDF cannot be processed; the user
@@ -140,6 +152,22 @@ def _image_only_error(og, carrier, contractor):
     return (f"No readable text found in the {which}. The reconciler needs "
             f"text-based (digitally exported) PDFs; a scanned or image-only PDF "
             f"cannot be read. Re-export or print the estimate to a PDF from the "
+            f"estimating software, then try again.")
+
+
+def _degraded_original_error(og):
+    """A blocking message when the original carrier estimate has a text layer but
+    its line-item table did not parse (a scanned/OCR original whose totals read
+    cleanly while the body is garbled). Its line items cannot seed the
+    original-vs-current approval diff, so the three-way run is refused rather than
+    painting false green 'approved' checks on scope that was already in the
+    original. Only fires in effectiveness mode (an original was supplied)."""
+    if og is None or og.parse_ratio >= OG_MIN_PARSE_RATIO:
+        return None
+    return (f"The original carrier estimate could not be read into line items: "
+            f"only ${og.rcv_line_sum:,.0f} of its ${og.grand_rcv:,.0f} total parsed "
+            f"(it appears to be a scanned or OCR PDF).\n"
+            f"Re-export the original as a digital (non-scanned) PDF from the "
             f"estimating software, then try again.")
 
 
@@ -260,6 +288,31 @@ def crm_upload():
         return jsonify({"ok": False, "error": f"Could not post to the CRM: {e}"})
 
 
+@bp.route("/crm/error-note", methods=["POST"])
+def crm_error_note():
+    """Post a reconciliation error message to a CRM deal as a plain note (no file),
+    signed by the bot. The browser sends the deal id and the exact error text the
+    run returned; the ERROR_MESSENGER_SUFFIX is appended here so the signature is
+    consistent and server-controlled. Only the numeric deal id crosses the wire."""
+    deal_id = (request.form.get("deal_id") or "").strip()
+    if not deal_id.isdigit():
+        return jsonify({"ok": False, "error": "Enter a valid CRM deal: a numeric id or a deal URL."})
+    message = (request.form.get("message") or "").strip()
+    if not message:
+        return jsonify({"ok": False, "error": "No error message to post."})
+    # CRM history renders HTML: carry the message's own line breaks (\n -> <br>) and
+    # drop the signature onto its own line below a blank line.
+    body = message.replace("\r\n", "\n").replace("\n", "<br>")
+    content = f"{body}<br><br>{ERROR_MESSENGER_SIGNATURE}"
+    try:
+        crm.post_note(deal_id, content)
+        return jsonify({"ok": True, "posted": content})
+    except crm.CrmError as e:
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not post to the CRM: {e}"})
+
+
 @bp.route("/run", methods=["POST"])
 def run():
     _sweep_stale_markups()
@@ -288,19 +341,35 @@ def run():
         # the user plainly instead of returning a meaningless reconciliation.
         img_err = _image_only_error(og, carrier, contractor)
         if img_err:
-            return jsonify({"error": img_err}), 422
+            return _file_error(img_err)
+
+        # Original present but its line table did not parse (scanned/OCR): its items
+        # cannot seed the approval diff, so refuse rather than paint false checks.
+        deg_err = _degraded_original_error(og)
+        if deg_err:
+            return _file_error(deg_err)
 
         if not carrier.items and carrier.grand_rcv == 0 and \
                 not contractor.items and contractor.grand_rcv == 0:
-            return jsonify({"error": "Could not read line items or totals from "
-                                     "either PDF. They may be an unsupported "
-                                     "format or not estimate documents."}), 422
+            return _file_error("Could not read line items or totals from "
+                               "either PDF. They may be an unsupported "
+                               "format or not estimate documents.")
 
         claimant = _claimant_from(contractor.name, carrier.name)
         if og is not None:
             recon = reconcile_effectiveness(og, carrier, contractor, claimant, PLAYBOOK)
         else:
             recon = reconcile_matched(carrier, contractor, claimant, PLAYBOOK)
+
+        # Late guard: the original parsed past the ratio floor, but the added-lines
+        # total is still grossly inconsistent with the grand-total approval delta
+        # (description drift or duplicate-line consumption). Refuse before painting.
+        if getattr(recon, "og_line_diff_unreliable", False):
+            return _file_error("The original carrier estimate could not be "
+                               "matched reliably against the current one: "
+                               + recon.og_line_diff_reason
+                               + ". Provide a digital (non-scanned) original PDF, or "
+                               "check that the two carrier files are the same claim.")
 
         # Paint the difference onto the carrier estimate: the primary deliverable.
         markup_name = f"{claimant}-carrier-markup.pdf"

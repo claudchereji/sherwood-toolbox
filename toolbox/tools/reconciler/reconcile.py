@@ -135,6 +135,11 @@ class Recon:
     approved_wins: list = field(default_factory=list)  # current-carrier LineItems approved (added + revised)
     approved_added: list = field(default_factory=list)  # subset: brand-new current-carrier lines
     approved_revised: list = field(default_factory=list)  # ApprovedRevision: raised existing lines
+    # Set when the original-vs-current line match cannot be trusted (a scanned/OCR
+    # original whose line table did not parse). The approved_* sets above are then
+    # blanked and the caller blocks the run; the grand-total approval math is kept.
+    og_line_diff_unreliable: bool = False
+    og_line_diff_reason: str = ""
     narrative: list = field(default_factory=list)  # plain-language summary [{text, tone}]
     # Section-total reconciliation: the outstanding per contractor section is the
     # difference of the printed section subtotals, so grade revisions (a renamed
@@ -655,6 +660,16 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
 # Effectiveness mode (three-way: original carrier, current carrier, contractor)
 # --------------------------------------------------------------------------- #
 
+# Trust thresholds for the original-vs-current line diff that drives the green
+# "approved" checks. Signal A: the original must parse most of its own grand total
+# into line items, or its line list is too incomplete to diff against. Signal B: the
+# summed RCV of the "added" lines must stay within a factor (plus a small absolute
+# margin, so small claims do not trip) of the grand-total approval delta, or the
+# match is producing phantom additions. Either signal marks the diff unreliable.
+OG_MIN_PARSE_RATIO = 0.80
+ADDED_SUM_FACTOR = 1.5
+ADDED_SUM_MARGIN = 500.0
+
 def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     """Measure how much of the contractor's supplement the carrier has approved.
 
@@ -720,6 +735,35 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     revised_nums = {x.number for x in revised}
     r.approved_wins = list(added) + [it for it in carrier.items
                                      if it.number in revised_nums]
+
+    # Trust guard: the approved_added / approved_wins / approved_revised sets above
+    # all come from matching the current carrier against the ORIGINAL carrier. When
+    # the original did not parse into a credible line list (a scanned/OCR original
+    # whose totals read cleanly while the table body is garbled), that match is
+    # meaningless: nearly every current line looks "added", so it must not paint
+    # green "approved" checks. Two independent signals flag it; either one blanks the
+    # line-diff sets and drives the block in routes.py. The grand-total approval math
+    # (approved_dollars, ask_dollars, effectiveness) is unaffected and stays.
+    added_sum = round(sum(it.rcv for it in added), 2)
+    if og.parse_ratio < OG_MIN_PARSE_RATIO:
+        r.og_line_diff_unreliable = True
+        r.og_line_diff_reason = (
+            f"the original carrier estimate parsed only {_money0(og.rcv_line_sum)} "
+            f"of its {_money0(og.grand_rcv)} total (parse_ratio "
+            f"{og.parse_ratio:.2f}); its line items cannot be trusted, so the "
+            f"per-item approvals could not be identified")
+    elif added and (r.approved_dollars <= 0 or
+                    added_sum > r.approved_dollars * ADDED_SUM_FACTOR + ADDED_SUM_MARGIN):
+        r.og_line_diff_unreliable = True
+        r.og_line_diff_reason = (
+            f"the added-lines total ({_money0(added_sum)}) far exceeds the "
+            f"approved-to-date delta ({_money0(r.approved_dollars)}) from the grand "
+            f"totals; the original-vs-current line match is unreliable, so the "
+            f"per-item approvals could not be identified")
+    if r.og_line_diff_unreliable:
+        r.approved_added = []
+        r.approved_wins = []
+        r.approved_revised = []
 
     # Recompute the sublimit hypothesis with the original estimate so the divergent
     # approval-rate signal (a frozen secondary structure) can be measured.

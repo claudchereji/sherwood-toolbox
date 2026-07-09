@@ -122,6 +122,8 @@
 }
 .rec-alert-info { background: var(--sage-50); border-left: 3px solid var(--green-500); color: var(--ink); }
 .rec-alert-warn { background: #f6efd9; border: 1px solid #d8d1bf; border-left: 4px solid #b8912b; color: #6d5a1d; }
+/* The run-error text keeps the message's own line breaks (\n between sentences). */
+#errorText { white-space: pre-line; }
 
 /* Marked-up carrier estimate result panel */
 .rec-markup { border-left: 4px solid var(--green-800); }

@@ -50,6 +50,20 @@
     <p id="loadingText">Reading PDFs, reconciling, and marking up the carrier estimate...</p>
   </div>
 
+  <div id="errorPanel" class="panel" style="display:none;">
+    <p class="panel-label">Could not process the estimates</p>
+    <div class="rec-alert rec-alert-warn" id="errorText"></div>
+    <div class="rec-post-crm" id="errorPostWrap" style="display:none;">
+      <p class="muted-note">Post this error to the CRM job as a note.</p>
+      <button type="button" class="btn btn-secondary" id="postErrCrm" style="display:none;">Post error to CRM job</button>
+      <div class="rec-crm-row" id="postErrDealRow" style="display:none;">
+        <input type="text" id="postErrDealInput" placeholder="Paste CRM deal URL or id to post the error to" autocomplete="off">
+        <button type="button" class="btn btn-secondary" id="postErrDealBtn">Post error to CRM</button>
+      </div>
+      <p class="rec-crm-status" id="errPostStatus"></p>
+    </div>
+  </div>
+
   <div id="results" style="display:none;">
 
     <div class="panel rec-narrative" id="narrativePanel" style="display:none;"></div>
@@ -102,10 +116,11 @@
 {% block extra_scripts %}
 <script>
   const REC_URLS = { run: "{{ url_for('reconciler.run') }}" };
-  const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}", upload: "{{ url_for('reconciler.crm_upload') }}" };
+  const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}", upload: "{{ url_for('reconciler.crm_upload') }}", errorNote: "{{ url_for('reconciler.crm_error_note') }}" };
   let currentDeal = null;   // {id, title} once a CRM deal is searched or pasted
   let markupName = null;    // filename of the latest markup, for posting to the CRM
   let markupNote = null;    // server-built CRM note (HTML) with the bot-math summary
+  let lastErrorMessage = null;  // last run error text, for posting to the CRM job
   function $(id) { return document.getElementById(id); }
   function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -291,6 +306,56 @@
     }
   }
 
+  // === run errors + posting the error to the CRM job ===
+  // A "file not readable" style error (crm_postable) offers a one-click note on the
+  // CRM job: the exact error text, signed server-side. The button shows when a deal
+  // is already known; otherwise a paste-a-deal row, mirroring the markup post UI.
+  function showError(data) {
+    const msg = data.error || 'Something went wrong.';
+    lastErrorMessage = msg;
+    $('errorText').textContent = msg;
+    const wrap = $('errorPostWrap');
+    if (data.crm_postable) {
+      wrap.style.display = '';
+      $('errPostStatus').textContent = ''; $('errPostStatus').classList.remove('rec-ok');
+      const known = currentDeal && currentDeal.id;
+      const b = $('postErrCrm');
+      b.style.display = known ? '' : 'none';
+      b.disabled = false; b.textContent = 'Post error to CRM job';
+      $('postErrDealRow').style.display = known ? 'none' : '';
+      $('postErrDealInput').value = '';
+    } else {
+      wrap.style.display = 'none';
+    }
+    $('errorPanel').style.display = 'block';
+  }
+
+  async function postErrorToCrm(dealId, message, btn) {
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+    $('errPostStatus').textContent = ''; $('errPostStatus').classList.remove('rec-ok');
+    try {
+      const fd = new FormData();
+      fd.append('deal_id', String(dealId));
+      fd.append('message', message);
+      const d = await (await fetch(CRM.errorNote, { method: 'POST', body: fd })).json();
+      if (d.ok) {
+        const b = $('postErrCrm');
+        b.style.display = ''; b.disabled = true; b.textContent = 'Error posted to CRM job ✓';
+        $('postErrDealRow').style.display = 'none';
+        // d.posted is the server-built note (line breaks as <br>); render it.
+        $('errPostStatus').innerHTML = d.posted || 'Posted to the CRM job.';
+        $('errPostStatus').classList.add('rec-ok');
+      } else {
+        $('errPostStatus').textContent = d.error || 'Could not post to the CRM.';
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      }
+    } catch (e) {
+      $('errPostStatus').textContent = 'Post failed: ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
   // For a slot, append either the uploaded file or the chosen CRM document.
   function appendSlot(fd, slot, fileInputId) {
     const file = $(fileInputId).files[0];
@@ -319,6 +384,18 @@
   });
   $('postDealInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('postDealBtn').click(); } });
 
+  $('postErrCrm').addEventListener('click', () => {
+    if (!currentDeal || !currentDeal.id || !lastErrorMessage) return;
+    postErrorToCrm(currentDeal.id, lastErrorMessage, $('postErrCrm'));
+  });
+  $('postErrDealBtn').addEventListener('click', () => {
+    if (!lastErrorMessage) { $('errPostStatus').textContent = 'Run a reconciliation first.'; return; }
+    const id = extractDealId($('postErrDealInput').value || '');
+    if (!id) { $('errPostStatus').textContent = 'Paste a CRM deal URL or a numeric deal id.'; return; }
+    postErrorToCrm(id, lastErrorMessage, $('postErrDealBtn'));
+  });
+  $('postErrDealInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('postErrDealBtn').click(); } });
+
   $('recForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData();
@@ -328,11 +405,12 @@
     if (!hasCarrier || !hasContractor) { alert('Provide a current carrier estimate and a contractor supplement. Upload a file or pick a CRM document for each.'); return; }
 
     $('results').style.display = 'none';
+    $('errorPanel').style.display = 'none';
     $('loading').style.display = 'block';
     $('runBtn').disabled = true;
     try {
       const data = await (await fetch(REC_URLS.run, { method: 'POST', body: fd })).json();
-      if (data.error) { alert(data.error); return; }
+      if (data.error) { showError(data); return; }
       renderNarrative(data);
       if (data.mode === 'effectiveness' && data.effectiveness) renderEffectiveness(data);
       else renderRecoverable(data);

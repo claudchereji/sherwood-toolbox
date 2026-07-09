@@ -314,6 +314,18 @@ def _note_category_id():
     return _NOTE_CATEGORY_ID
 
 
+def post_note(deal_id, content):
+    """Post a plain note (no file) to a CRM deal's activity feed as one 'Note'
+    history event. This is upload_file without the file: a `/crm/history` event
+    carrying only text, used to log a bot message on the job when there is nothing
+    to attach (for example a reconciliation error). Returns {event_id}."""
+    did = int(deal_id)
+    resp = _api_post("/crm/history", json={
+        "entityType": "opportunity", "entityId": did, "contactId": 0,
+        "categoryId": _note_category_id(), "content": content or ""})
+    return {"event_id": (resp.get("id") if isinstance(resp, dict) else None)}
+
+
 def upload_file(deal_id, path, title=None, note=ATTACH_NOTE):
     """Attach a local file to a CRM deal (opportunity) and post a note in one
     activity event, the reverse of download_file. `/files/upload` only stores the
