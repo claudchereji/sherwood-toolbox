@@ -11,6 +11,7 @@ figures, the counts, and the download link for that marked-up PDF. Raw uploads a
 still deleted after parsing; only the derived log persists.
 """
 import os
+import time
 from pathlib import Path
 
 from flask import Blueprint, jsonify, render_template, request, send_file, url_for
@@ -61,6 +62,23 @@ def cleanup_file(filepath):
             os.remove(filepath)
         except OSError as e:
             print(f"Error deleting {filepath}: {e}")
+
+
+def _sweep_stale_markups(max_age=1800):
+    """Delete markup PDFs in the upload dir older than max_age seconds. The markup
+    now survives its download so it can also be posted to the CRM, so this bounds
+    accumulation instead of the old delete-on-serve. Never fatal (a read-only dir
+    must not fail a run)."""
+    try:
+        now = time.time()
+        for p in Path(_upload_dir()).glob("*-carrier-markup.pdf"):
+            try:
+                if now - p.stat().st_mtime > max_age:
+                    p.unlink()
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"Reconciler markup sweep skipped: {e}")
 
 
 def _save_upload(file_storage):
@@ -151,6 +169,33 @@ def _side(est):
     }
 
 
+def _money(x):
+    """$1,234.56 style, matching the on-screen figures."""
+    v = float(x or 0)
+    return ("-$" if v < 0 else "$") + f"{abs(v):,.2f}"
+
+
+def _crm_note(recon):
+    """The activity-feed note posted with the marked-up estimate: the base lines
+    plus a bold + underlined one-line summary of the numbers. CRM history renders
+    HTML, so <b>/<u>/<br> are used. Effectiveness mode mirrors the Approval
+    Effectiveness tiles (increase ratio, new RCV, total increase to date); the
+    two-file mode summarizes the RCV gap instead."""
+    base = ("Reconciliation bot finished it's terrible purpose:<br><br>"
+            "the marked up Carrier Estimate is Attached to the file.")
+    if recon.mode == "effectiveness":
+        pct = round((recon.effectiveness or 0) * 100)
+        math = (f"Bot math: Increase ratio: {pct}%. "
+                f"New RCV {_money(recon.carrier_grand)} "
+                f"(Total increase to date: {_money(recon.approved_dollars)}).")
+    else:
+        gap = recon.contractor_grand - recon.carrier_grand
+        math = (f"Bot math: Carrier RCV {_money(recon.carrier_grand)}. "
+                f"Contractor RCV {_money(recon.contractor_grand)}. "
+                f"Recoverable gap {_money(gap)}.")
+    return f"{base}<br><br><b><u>{math}</u></b>"
+
+
 # === SECTION: routes ===
 @bp.route("/")
 def index():
@@ -187,8 +232,37 @@ def crm_files():
         return jsonify({"ok": False, "error": f"Could not list the deal's files: {e}"})
 
 
+@bp.route("/crm/upload", methods=["POST"])
+def crm_upload():
+    """Attach an already-generated markup PDF to a CRM deal. The browser holds the
+    deal id and the file name from the run, so it posts them here; the file only
+    leaves this machine to land on the deal it belongs to, then is deleted."""
+    deal_id = (request.form.get("deal_id") or "").strip()
+    if not deal_id.isdigit():
+        return jsonify({"ok": False, "error": "Enter a valid CRM deal: a numeric id or a deal URL."})
+    name = secure_filename(request.form.get("name") or "")
+    if not name.lower().endswith(".pdf"):
+        return jsonify({"ok": False, "error": "No marked-up PDF to post."})
+    path = os.path.join(_upload_dir(), name)
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "The marked-up PDF has expired; run the "
+                                              "reconciliation again, then post."})
+    # The note (with the bot-math summary) is built server-side in run() and sent
+    # back with the post; fall back to the plain default if it is missing.
+    note = (request.form.get("note") or "").strip() or crm.ATTACH_NOTE
+    try:
+        result = crm.upload_file(deal_id, path, title=name, note=note)
+        cleanup_file(path)          # posted to the CRM; keep no local copy
+        return jsonify({"ok": True, "file_id": result.get("file_id")})
+    except crm.CrmError as e:
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not post to the CRM: {e}"})
+
+
 @bp.route("/run", methods=["POST"])
 def run():
+    _sweep_stale_markups()
     carrier_path = contractor_path = og_path = None
     try:
         carrier_path = _resolve_slot("carrier", "carrier_file_id", "carrier_file_name")
@@ -272,6 +346,7 @@ def run():
             "swap_hint": swap_hint,
             "markup_download": url_for("reconciler.download_file", name=markup_name),
             "log_path": log_paths.get("md", ""),
+            "crm_note": _crm_note(recon),
         }
         if recon.mode == "effectiveness":
             payload["effectiveness"] = {
@@ -299,15 +374,16 @@ def run():
 
 @bp.route("/download/<name>")
 def download_file(name):
-    """Serve a generated file from the upload dir once, then delete it. The
-    marked-up carrier PDF is the deliverable; the .md/.csv paths remain valid for
-    any caller that still requests them."""
+    """Serve a generated file from the upload dir. The marked-up carrier PDF is
+    kept after serving so it can also be posted to the CRM (the stale sweep in
+    run() bounds how long it lingers); any other served file is removed once."""
     safe = secure_filename(name)
     if not safe or not safe.lower().endswith((".pdf", ".md", ".csv")):
         return "File not found", 404
     filepath = os.path.join(_upload_dir(), safe)
     if os.path.exists(filepath):
         response = send_file(filepath, as_attachment=True)
-        cleanup_file(filepath)
+        if not safe.lower().endswith(".pdf"):
+            cleanup_file(filepath)
         return response
     return "File not found", 404

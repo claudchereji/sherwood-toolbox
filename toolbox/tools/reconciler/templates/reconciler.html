@@ -82,19 +82,30 @@
         <div class="rec-stat"><span class="rec-stat-num" id="stC">0</span><span class="rec-stat-lbl" id="stCLbl"></span><span class="rec-stat-sub" id="stCSub"></span></div>
       </div>
       <button class="btn btn-primary" id="dlMarkup">Download marked-up carrier estimate (PDF)</button>
+      <div class="rec-post-crm">
+        <button type="button" class="btn btn-secondary" id="postCrm" style="display:none;">Post marked-up estimate to CRM job</button>
+        <div class="rec-crm-row" id="postDealRow" style="display:none;">
+          <input type="text" id="postDealInput" placeholder="Paste CRM deal URL or id to attach" autocomplete="off">
+          <button type="button" class="btn btn-secondary" id="postDealBtn">Post to CRM</button>
+        </div>
+        <p class="rec-crm-status" id="postStatus"></p>
+      </div>
       <p class="rec-log-note" id="logNote"></p>
     </div>
 
   </div>
 </div>
 
-<p class="note">Uploaded and fetched estimates are read locally and deleted once the markup is built. The line-by-line breakdown is written to a log; the marked-up PDF is served once and then removed. Figures are an aid to review, not a guarantee of coverage. Sherwood Estimates &copy; 2026.</p>
+<p class="note">Uploaded and fetched estimates are read locally and deleted once the markup is built. The line-by-line breakdown is written to a log; the marked-up PDF is kept briefly so it can be downloaded and posted back to the CRM job, then swept. Figures are an aid to review, not a guarantee of coverage. Sherwood Estimates &copy; 2026.</p>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
   const REC_URLS = { run: "{{ url_for('reconciler.run') }}" };
-  const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}" };
+  const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}", upload: "{{ url_for('reconciler.crm_upload') }}" };
+  let currentDeal = null;   // {id, title} once a CRM deal is searched or pasted
+  let markupName = null;    // filename of the latest markup, for posting to the CRM
+  let markupNote = null;    // server-built CRM note (HTML) with the bot-math summary
   function $(id) { return document.getElementById(id); }
   function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -145,6 +156,7 @@
     });
   }
   async function crmLoadFiles(id, label) {
+    currentDeal = { id: String(id), title: label || '' };
     $('crmDeals').innerHTML = '';
     $('crmStatus').textContent = 'Loading the job’s documents...';
     try {
@@ -237,6 +249,48 @@
     };
   }
 
+  // === post the markup back to the CRM job ===
+  // Show the direct button when a deal is already known (searched/pasted), else
+  // the paste-a-deal-URL row. Called after each successful run.
+  function preparePostUi(url) {
+    markupName = decodeURIComponent(url.split('/').pop());
+    const b = $('postCrm');
+    b.disabled = false; b.textContent = 'Post marked-up estimate to CRM job';
+    $('postStatus').textContent = ''; $('postStatus').classList.remove('rec-ok');
+    $('postDealInput').value = '';
+    const known = currentDeal && currentDeal.id;
+    b.style.display = known ? '' : 'none';
+    $('postDealRow').style.display = known ? 'none' : '';
+  }
+
+  async function postToCrm(dealId, name, btn) {
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+    $('postStatus').textContent = ''; $('postStatus').classList.remove('rec-ok');
+    try {
+      const fd = new FormData();
+      fd.append('deal_id', String(dealId));
+      fd.append('name', name);
+      if (markupNote) fd.append('note', markupNote);
+      const d = await (await fetch(CRM.upload, { method: 'POST', body: fd })).json();
+      if (d.ok) {
+        const pb = $('postCrm');
+        pb.style.display = ''; pb.disabled = true; pb.textContent = 'Attached to CRM job ✓';
+        $('postDealRow').style.display = 'none';
+        // markupNote is HTML built by the server (bot-math line bold + underlined).
+        $('postStatus').innerHTML = markupNote ||
+          "Reconciliation bot finished it's terrible purpose:<br><br>the marked up Carrier Estimate is Attached to the file.";
+        $('postStatus').classList.add('rec-ok');
+      } else {
+        $('postStatus').textContent = d.error || 'Could not post to the CRM.';
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      }
+    } catch (e) {
+      $('postStatus').textContent = 'Post failed: ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
   // For a slot, append either the uploaded file or the chosen CRM document.
   function appendSlot(fd, slot, fileInputId) {
     const file = $(fileInputId).files[0];
@@ -252,6 +306,18 @@
 
   $('crmFind').addEventListener('click', crmFind);
   $('crmQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); crmFind(); } });
+
+  $('postCrm').addEventListener('click', () => {
+    if (!currentDeal || !currentDeal.id || !markupName) return;
+    postToCrm(currentDeal.id, markupName, $('postCrm'));
+  });
+  $('postDealBtn').addEventListener('click', () => {
+    if (!markupName) { $('postStatus').textContent = 'Run a reconciliation first.'; return; }
+    const id = extractDealId($('postDealInput').value || '');
+    if (!id) { $('postStatus').textContent = 'Paste a CRM deal URL or a numeric deal id.'; return; }
+    postToCrm(id, markupName, $('postDealBtn'));
+  });
+  $('postDealInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('postDealBtn').click(); } });
 
   $('recForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -273,6 +339,8 @@
       $('logNote').textContent = data.log_path ? ('Full line-by-line breakdown logged to ' + data.log_path) : '';
       buildAlerts(data);
       wireDownload($('dlMarkup'), data.markup_download);
+      markupNote = data.crm_note || null;
+      preparePostUi(data.markup_download);
       $('results').style.display = 'block';
     } catch (err) { alert('Error: ' + err.message); }
     finally { $('loading').style.display = 'none'; $('runBtn').disabled = false; }

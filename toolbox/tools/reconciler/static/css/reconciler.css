@@ -141,3 +141,8 @@
   margin: 12px 0 0; font-size: 0.78rem; color: var(--muted); word-break: break-all;
 }
 @media (max-width: 720px) { .rec-markup-stats { grid-template-columns: 1fr; } }
+
+/* Post-to-CRM action under the download button */
+.rec-post-crm { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.rec-post-crm .rec-crm-status { margin: 0; }
+.rec-post-crm .rec-crm-status.rec-ok { color: var(--green-800); font-weight: 600; white-space: pre-line; }
