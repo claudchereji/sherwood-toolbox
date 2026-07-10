@@ -1,7 +1,12 @@
 """Ice and Water Shield calculator: a static, client-side tool. The Python side
-only serves the page; all math runs in static/js/calculator.js.
+serves the page and a PDF export endpoint; all math runs in static/js/calculator.js.
 Edit the coverage math there, not here."""
-from flask import Blueprint, render_template
+import io
+import tempfile
+import os
+
+import fitz
+from flask import Blueprint, render_template, request, send_file
 
 bp = Blueprint(
     "iws",
@@ -15,3 +20,145 @@ bp = Blueprint(
 @bp.route("/")
 def index():
     return render_template("iws.html")
+
+
+@bp.route("/pdf", methods=["POST"])
+def export_pdf():
+    """Generate a one-page PDF summary of the IWS calculation."""
+    data = request.get_json(silent=True) or {}
+    project_name = (data.get("projectName") or "Untitled Project").strip()
+    project_address = (data.get("projectAddress") or "").strip()
+    actual_total = data.get("actualTotal", 0)
+    full_roll_total = data.get("fullRollTotal", 0)
+    coverage = data.get("coverage", 0)
+    eave_length = data.get("eaveLength", 0)
+    valley_length = data.get("valleyLength", 0)
+    roof_size = data.get("roofSizeSq", 0)
+    roof_pitch = data.get("roofPitch", 0)
+    felt_reduction = data.get("feltReduction", 0)
+    felt_sq = data.get("feltSq", 0)
+    calc_mode = data.get("calcMode", "eaveValley")
+    wall_thickness = data.get("wallThickness", 0)
+    inside_wall = data.get("insideWall", 0)
+    soffit_depth = data.get("soffitDepth", 0)
+
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)  # US Letter
+    margin = 54
+    y = margin
+
+    # Title
+    page.insert_text((margin, y), "Ice and Water Shield Calculation",
+                     fontname="helv", fontsize=16, color=(0.1, 0.15, 0.1))
+    y += 24
+    page.draw_line((margin, y), (612 - margin, y),
+                   color=(0.6, 0.65, 0.55), width=1)
+    y += 20
+
+    # Project info
+    page.insert_text((margin, y), f"Project: {project_name}",
+                     fontname="helv", fontsize=11, color=(0.1, 0.15, 0.1))
+    y += 16
+    if project_address:
+        page.insert_text((margin, y), f"Address: {project_address}",
+                         fontname="helv", fontsize=10, color=(0.35, 0.4, 0.33))
+        y += 16
+    y += 8
+
+    # Inputs section
+    page.insert_text((margin, y), "Inputs",
+                     fontname="helv", fontsize=12, color=(0.1, 0.15, 0.1))
+    y += 18
+    inputs = [
+        f"Roof Size: {roof_size} SQ",
+        f"Predominant Pitch: {roof_pitch}/12",
+        f"Eave Length: {eave_length} LF",
+        f"Valley Length: {valley_length} LF" if calc_mode != "eaveOnly" else None,
+        f"Inside Exterior Wall: {inside_wall}\"",
+        f"Soffit Depth: {soffit_depth}\"",
+        f"Wall Thickness: {wall_thickness}\"",
+        f"Mode: {'Eave + Valley' if calc_mode == 'eaveValley' else 'Eave Only'}",
+    ]
+    for line in inputs:
+        if line is None:
+            continue
+        page.insert_text((margin + 12, y), line,
+                         fontname="helv", fontsize=10, color=(0.3, 0.35, 0.28))
+        y += 15
+    y += 10
+
+    # Results section
+    page.draw_line((margin, y), (612 - margin, y),
+                   color=(0.6, 0.65, 0.55), width=0.5)
+    y += 16
+    page.insert_text((margin, y), "Results",
+                     fontname="helv", fontsize=12, color=(0.1, 0.15, 0.1))
+    y += 20
+
+    # Results in two columns
+    col2 = 320
+    page.insert_text((margin, y), "Actual Coverage:",
+                     fontname="helv", fontsize=10, color=(0.35, 0.4, 0.33))
+    page.insert_text((margin + 120, y), f"{actual_total} SF",
+                     fontname="helv", fontsize=11, color=(0.1, 0.15, 0.1))
+    page.insert_text((col2, y), "Full Roll Coverage:",
+                     fontname="helv", fontsize=10, color=(0.35, 0.4, 0.33))
+    page.insert_text((col2 + 128, y), f"{full_roll_total} SF",
+                     fontname="helv", fontsize=11, color=(0.1, 0.15, 0.1))
+    y += 18
+    page.insert_text((margin, y), "IWS Coverage Width:",
+                     fontname="helv", fontsize=10, color=(0.35, 0.4, 0.33))
+    page.insert_text((margin + 140, y), f"{coverage}\"",
+                     fontname="helv", fontsize=11, color=(0.1, 0.15, 0.1))
+    y += 18
+    page.insert_text((margin, y), "Felt Reduction:",
+                     fontname="helv", fontsize=10, color=(0.35, 0.4, 0.33))
+    page.insert_text((margin + 110, y), f"{felt_reduction} SF ({felt_sq} SQ)",
+                     fontname="helv", fontsize=11, color=(0.1, 0.15, 0.1))
+    y += 28
+
+    # Math breakdown
+    page.draw_line((margin, y), (612 - margin, y),
+                   color=(0.6, 0.65, 0.55), width=0.5)
+    y += 16
+    page.insert_text((margin, y), "Calculation",
+                     fontname="helv", fontsize=12, color=(0.1, 0.15, 0.1))
+    y += 18
+    math_text = (
+        f"Using the predominant soffit depth of {soffit_depth}\", "
+        f"wall thickness of {wall_thickness}\", and a {roof_pitch}/12 roof pitch, "
+        f"the ice barrier must extend onto the roof's surface at least "
+        f"{coverage}\" from the lowest edge to a point not less than "
+        f"{inside_wall}\" inside the exterior wall line."
+    )
+    # Word-wrap the math text
+    words = math_text.split()
+    line = ""
+    for word in words:
+        test = (line + " " + word).strip()
+        if fitz.get_text_length(test, fontname="helv", fontsize=9) > (612 - 2 * margin):
+            page.insert_text((margin + 12, y), line,
+                             fontname="helv", fontsize=9, color=(0.3, 0.35, 0.28))
+            y += 13
+            line = word
+        else:
+            line = test
+    if line:
+        page.insert_text((margin + 12, y), line,
+                         fontname="helv", fontsize=9, color=(0.3, 0.35, 0.28))
+        y += 20
+
+    # Footer
+    page.insert_text((margin, 792 - margin),
+                     "Sherwood Estimates  |  Generated by IWS Calculator",
+                     fontname="helv", fontsize=8, color=(0.5, 0.55, 0.48))
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    doc.close()
+    buf.seek(0)
+
+    safe_name = project_name.replace(" ", "_").replace("/", "-")[:40]
+    filename = f"IWS_{safe_name}.pdf" if safe_name else "IWS_Calculation.pdf"
+    return send_file(buf, mimetype="application/pdf",
+                     as_attachment=True, download_name=filename)

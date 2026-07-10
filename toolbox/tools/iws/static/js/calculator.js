@@ -43,6 +43,7 @@
         calculateBtn: document.getElementById('calculateBtn'),
         clearBtn: document.getElementById('clearBtn'),
         roofPlanBtn: document.getElementById('roofPlanBtn'),
+        savePdfBtn: document.getElementById('savePdfBtn'),
         closeRoofPlan: document.getElementById('closeRoofPlan'),
         roofPlanPanel: document.getElementById('roofPlanPanel'),
         resultsSection: document.getElementById('resultsSection'),
@@ -496,6 +497,60 @@
         document.body.removeChild(link);
     }
 
+    // ─── PDF Export ──────────────────────────────────────────────────────
+    function handleSavePdf() {
+        var inputs = getInputs();
+        var geom = calculateGeometry(inputs);
+        var actual = calculateActualSF(inputs, geom);
+        var fullRoll = calculateFullRoll(inputs, geom);
+
+        var payload = {
+            projectName: inputs.projectName,
+            projectAddress: inputs.projectAddress,
+            roofSizeSq: inputs.roofSizeSq,
+            roofPitch: inputs.roofPitch,
+            eaveLength: inputs.eaveLength,
+            valleyLength: inputs.valleyLength,
+            calcMode: inputs.calcMode,
+            insideWall: inputs.insideWall,
+            soffitDepth: inputs.soffitDepth,
+            coverage: geom.coverage,
+            wallThickness: geom.wallThickness,
+            actualTotal: actual.total,
+            fullRollTotal: fullRoll.total,
+            feltReduction: actual.feltReduction,
+            feltSq: actual.feltSq
+        };
+
+        els.savePdfBtn.disabled = true;
+        els.savePdfBtn.textContent = 'Generating...';
+
+        fetch('/iws/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(function(r) {
+            if (!r.ok) throw new Error('Server returned ' + r.status);
+            return r.blob();
+        }).then(function(blob) {
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            var rawName = (inputs.projectName || '').trim();
+            var safeName = rawName.replace(/\s+/g, '_').replace(/[\\/:*?"<>|]/g, '');
+            a.href = url;
+            a.download = safeName ? 'IWS_' + safeName + '.pdf' : 'IWS_Calculation.pdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }).catch(function(err) {
+            alert('PDF export failed: ' + err.message);
+        }).finally(function() {
+            els.savePdfBtn.disabled = false;
+            els.savePdfBtn.textContent = 'Save as PDF';
+        });
+    }
+
     // ─── Event Handlers ──────────────────────────────────────────────────────
     function handleCalculate() {
         const inputs = getInputs();
@@ -535,6 +590,7 @@
 
         // Enable IWS Diagram button after successful calculation
         els.roofPlanBtn.disabled = false;
+        els.savePdfBtn.disabled = false;
 
         // Persist calculation to localStorage history
         addToHistory(inputs, actual, fullRoll);
@@ -563,6 +619,7 @@
         els.roofPlanPanel.classList.add('hidden');
         els.roofPlanBtn.setAttribute('aria-expanded', 'false');
         els.roofPlanBtn.disabled = true;
+        els.savePdfBtn.disabled = true;
 
         els.roofSize.focus();
     }
@@ -651,6 +708,7 @@
         els.roofPlanBtn.addEventListener('click', toggleRoofPlan);
         els.closeRoofPlan.addEventListener('click', closeRoofPlanPanel);
         els.saveDiagramBtn.addEventListener('click', handleSaveDiagram);
+        els.savePdfBtn.addEventListener('click', handleSavePdf);
 
         // Copy buttons
         document.querySelectorAll('.btn-copy').forEach(btn => {
