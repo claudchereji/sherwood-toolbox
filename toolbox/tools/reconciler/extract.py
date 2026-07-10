@@ -180,6 +180,14 @@ def _is_data_cont(line: str) -> bool:
     s = line.strip()
     if not s or _is_note(line):
         return False
+    # A numeric record line may carry condition/depreciation column glyphs the
+    # per-token scan does not enumerate ('100% [M]' on a fully-depreciated line) or
+    # lead with a Xactimate variable label. A 'qty UNIT ... money' signature marks
+    # it as data unambiguously; without this accept the whole item is dropped, and a
+    # line the original omits but the revision keeps reads as a false addition.
+    qm = QTY_UNIT.search(s)
+    if qm and qm.group(2).upper() in UNITS and MONEY.search(s[qm.end():]):
+        return True
     toks = s.split()
     if not any(ch.isdigit() for ch in s):
         return False

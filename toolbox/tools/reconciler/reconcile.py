@@ -722,9 +722,21 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
 
     revised = []
     for cur, og_it in matched_oc:
-        delta = round(cur.rcv - og_it.rcv, 2)
-        if delta < 1.0:                       # only lines the carrier raised
+        # A genuine revision changes the line's SCOPE: a different quantity or unit
+        # price. When both are unchanged, the line is identical scope and any RCV
+        # move is the carrier applying sales tax or O&P at the coverage level (which
+        # some carriers distribute into per-line RCV, e.g. Quilatan). That is not an
+        # approval and must not paint a green "raised" mark, or the per-item markup
+        # diverges from the grand-total approval math that is reliable to the cent.
+        qty_same = abs(cur.quantity - og_it.quantity) < 0.005
+        price_same = abs(cur.unit_price - og_it.unit_price) < 0.005
+        if qty_same and price_same:
             continue
+        base_delta = round(cur.quantity * cur.unit_price
+                           - og_it.quantity * og_it.unit_price, 2)
+        if base_delta < 1.0:                  # only lines the carrier raised in scope
+            continue
+        delta = round(cur.rcv - og_it.rcv, 2)
         cq = cr = 0.0
         cand = con_by_base.get(cur.base) or []
         if cand:                              # closest contractor quantity

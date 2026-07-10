@@ -124,19 +124,31 @@ def match_line_items(carrier_items, contractor_items, threshold: float = 0.86):
     for it in contractor_items:
         cand = [c for c in by_base.get(it.base, []) if id(c) not in used]
         if cand:
-            partner = cand[0]
+            # Several lines can share a base key (three tear-off runs at different
+            # quantities); pair the closest in quantity so a line matches its true
+            # counterpart, not merely the first listed. Pairing 1.43 SQ to 92.44 SQ
+            # would read as a huge false increase.
+            partner = min(cand, key=lambda c: abs(c.quantity - it.quantity))
             used.add(id(partner))
             matched.append((it, partner))
             continue
-        # fuzzy fallback across unused carrier items
-        best, best_r = None, 0.0
+        # fuzzy fallback: score every unused carrier item, boosting a base that is
+        # the other plus a trailing qualifier ('...shingles' vs '...shingles -
+        # laminated', which the parser can produce when a description wraps). Among
+        # plausible matches take the closest quantity.
+        scored = []
         for c in carrier_items:
             if id(c) in used:
                 continue
-            r = _similar(it.base, c.base)
-            if r > best_r:
-                best, best_r = c, r
-        if best is not None and best_r >= threshold:
+            s = _similar(it.base, c.base)
+            a, b = it.base, c.base
+            if len(a) >= 12 and len(b) >= 12 and (a in b or b in a):
+                s = max(s, 0.90 + 0.09 * min(len(a), len(b)) / max(len(a), len(b)))
+            if s >= threshold:
+                scored.append((round(s, 2), abs(c.quantity - it.quantity), c))
+        if scored:
+            scored.sort(key=lambda t: (-t[0], t[1]))
+            best = scored[0][2]
             used.add(id(best))
             matched.append((it, best))
         else:
