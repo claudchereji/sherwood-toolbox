@@ -2,6 +2,9 @@
 {% block title %}Photo Report - Sherwood Toolbox{% endblock %}
 {% block page_title %}Photo Report{% endblock %}
 {% block page_subtitle %}Build a branded photo report PDF{% endblock %}
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ url_for('photo_report.static', filename='css/pr.css') }}">
+{% endblock %}
 
 {% block content %}
 <form id="prForm">
@@ -58,7 +61,7 @@
 
   <div class="panel company-theme-surface">
     <h2>Photos</h2>
-    <p class="panel-hint">Select the job photos to include. Images are resized and compressed to fit the size limit.</p>
+    <p class="panel-hint">Select the job photos to include. Drag to reorder. Add optional captions below each photo.</p>
     <div class="form-grid">
       <div class="field full">
         <label for="photos">Photo files</label>
@@ -70,6 +73,7 @@
         <div class="with-unit"><input type="number" id="max_size_mb" name="max_size_mb" value="10" step="0.5" min="0.5"><span class="unit">MB</span></div>
       </div>
     </div>
+    <div id="photoGrid" class="pr-photo-grid"></div>
     <div class="button-row">
       <button type="submit" class="btn btn-primary company-tinted" id="genBtn">Generate Report PDF</button>
       <span class="muted-note" id="genMsg"></span>
@@ -86,13 +90,111 @@
   };
   function $(id) { return document.getElementById(id); }
 
-  $('photos').addEventListener('change', e => {
-    const n = e.target.files.length;
-    $('photoCount').textContent = n ? `${n} photo${n === 1 ? '' : 's'} selected.` : 'No photos selected.';
+  // Photo management: reorderable grid with captions
+  let photoFiles = [];      // File objects in current order
+  let photoOrder = [];      // indices into photoFiles
+  let photoCaptions = {};   // index -> caption string
+  let dragIdx = null;
+
+  function renderPhotoGrid() {
+    const grid = $('photoGrid');
+    grid.innerHTML = '';
+    if (!photoOrder.length) { grid.style.display = 'none'; return; }
+    grid.style.display = '';
+    photoOrder.forEach(function(idx, pos) {
+      const file = photoFiles[idx];
+      if (!file) return;
+      const card = document.createElement('div');
+      card.className = 'pr-photo-card';
+      card.draggable = true;
+      card.dataset.pos = pos;
+
+      const thumb = document.createElement('div');
+      thumb.className = 'pr-photo-thumb';
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      thumb.appendChild(img);
+
+      const info = document.createElement('div');
+      info.className = 'pr-photo-info';
+      const name = document.createElement('div');
+      name.className = 'pr-photo-name';
+      name.textContent = file.name;
+      name.title = file.name;
+      const capInput = document.createElement('input');
+      capInput.type = 'text';
+      capInput.className = 'pr-photo-caption';
+      capInput.placeholder = 'Optional caption';
+      capInput.value = photoCaptions[idx] || '';
+      capInput.addEventListener('input', function() { photoCaptions[idx] = this.value; });
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn btn-secondary pr-photo-remove';
+      removeBtn.textContent = '\u00d7';
+      removeBtn.title = 'Remove photo';
+      removeBtn.addEventListener('click', function() {
+        photoFiles[idx] = null;
+        photoOrder.splice(pos, 1);
+        delete photoCaptions[idx];
+        renderPhotoGrid();
+        updatePhotoCount();
+      });
+
+      info.appendChild(name);
+      info.appendChild(capInput);
+      info.appendChild(removeBtn);
+      card.appendChild(thumb);
+      card.appendChild(info);
+
+      // Drag events
+      card.addEventListener('dragstart', function(e) {
+        dragIdx = pos;
+        card.classList.add('pr-dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      card.addEventListener('dragend', function() {
+        card.classList.remove('pr-dragging');
+        dragIdx = null;
+        grid.querySelectorAll('.pr-photo-card').forEach(function(c) { c.classList.remove('pr-drag-over'); });
+      });
+      card.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        card.classList.add('pr-drag-over');
+      });
+      card.addEventListener('dragleave', function() { card.classList.remove('pr-drag-over'); });
+      card.addEventListener('drop', function(e) {
+        e.preventDefault();
+        card.classList.remove('pr-drag-over');
+        if (dragIdx === null || dragIdx === pos) return;
+        const item = photoOrder.splice(dragIdx, 1)[0];
+        photoOrder.splice(pos, 0, item);
+        renderPhotoGrid();
+      });
+
+      grid.appendChild(card);
+    });
+  }
+
+  function updatePhotoCount() {
+    const n = photoOrder.length;
+    $('photoCount').textContent = n ? n + ' photo' + (n === 1 ? '' : 's') + ' selected.' : 'No photos selected.';
+  }
+
+  $('photos').addEventListener('change', function(e) {
+    const newFiles = Array.from(e.target.files);
+    newFiles.forEach(function(f) {
+      const idx = photoFiles.length;
+      photoFiles.push(f);
+      photoOrder.push(idx);
+    });
+    e.target.value = '';
+    renderPhotoGrid();
+    updatePhotoCount();
   });
 
   const crmBtn = $('crmFetchBtn');
-  if (crmBtn) crmBtn.addEventListener('click', async () => {
+  if (crmBtn) crmBtn.addEventListener('click', async function() {
     const msg = $('crmMsg');
     msg.textContent = 'Looking up...';
     const fd = new FormData();
@@ -104,17 +206,28 @@
       const info = data.info || {};
       const map = { customer_name: 'customer_name', claim_number: 'claim_number',
                     job_location: 'job_location', job_id: 'job_id' };
-      Object.keys(map).forEach(k => { if (info[k] && $(map[k])) $(map[k]).value = info[k]; });
+      Object.keys(map).forEach(function(k) { if (info[k] && $(map[k])) $(map[k]).value = info[k]; });
       msg.textContent = 'Fields filled from CRM.';
     } catch (e) { msg.textContent = 'Lookup failed: ' + e.message; }
   });
 
-  $('prForm').addEventListener('submit', async (e) => {
+  $('prForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     const btn = $('genBtn'), msg = $('genMsg');
     btn.disabled = true; msg.textContent = 'Generating...';
     try {
-      const r = await fetch(PR.generate, { method: 'POST', body: new FormData($('prForm')) });
+      const fd = new FormData($('prForm'));
+      // Remove the original photos entry and re-add in order
+      fd.delete('photos');
+      var captionsArr = [];
+      photoOrder.forEach(function(idx) {
+        if (photoFiles[idx]) {
+          fd.append('photos', photoFiles[idx]);
+          captionsArr.push(photoCaptions[idx] || '');
+        }
+      });
+      fd.append('photo_captions', JSON.stringify(captionsArr));
+      const r = await fetch(PR.generate, { method: 'POST', body: fd });
       const ct = r.headers.get('content-type') || '';
       if (ct.includes('application/pdf')) {
         const blob = await r.blob();
@@ -127,7 +240,7 @@
         document.body.removeChild(a); URL.revokeObjectURL(url);
         msg.textContent = 'Downloaded ' + name;
       } else {
-        const data = await r.json().catch(() => ({ error: 'Generation failed.' }));
+        const data = await r.json().catch(function() { return { error: 'Generation failed.' }; });
         msg.textContent = data.error || 'Generation failed.';
       }
     } catch (e) { msg.textContent = 'Error: ' + e.message; }

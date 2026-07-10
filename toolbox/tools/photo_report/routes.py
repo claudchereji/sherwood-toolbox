@@ -6,6 +6,7 @@ collects inputs and wires them. Edit fields here; edit the PDF in
 restoration_common.
 """
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -61,6 +62,12 @@ def generate():
     except ValueError:
         max_size_mb = 10.0
 
+    # Captions arrive as a JSON array parallel to the files list.
+    try:
+        captions = json.loads(form.get("photo_captions", "[]") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        captions = []
+
     temp_dir = tempfile.mkdtemp(prefix="toolbox_photo_")
     try:
         image_paths = []
@@ -72,6 +79,27 @@ def generate():
         logo_path = find_logo(temp_dir, company)
         out_path = os.path.join(temp_dir, "report.pdf")
         gen = PhotoReportPDF(out_path, job_info, company, logo_path=logo_path)
+
+        # The generator's _create_page draws display_filename as the photo
+        # info line. When a caption is provided, prepend it to the filename
+        # so the PDF shows "Caption  |  filename.jpg" on each page.
+        if captions and len(captions) == len(image_paths):
+            display_names = []
+            for i, path in enumerate(image_paths):
+                cap = (captions[i] if i < len(captions) else "").strip()
+                fname = os.path.basename(path)
+                display_names.append(f"{cap}  |  {fname}" if cap else fname)
+            # Monkey-patch the display names into the generate flow by
+            # overriding _create_page's default filename behavior.
+            _orig_create_page = gen._create_page
+            def _patched_create_page(c, image_path, display_filename=None,
+                                     original_path=None, page_index=0):
+                if display_filename is None and page_index < len(display_names):
+                    display_filename = display_names[page_index]
+                return _orig_create_page(c, image_path, display_filename,
+                                         original_path, page_index)
+            gen._create_page = _patched_create_page
+
         if not gen.generate(image_paths, max_size_mb=max_size_mb) or not os.path.exists(out_path):
             return jsonify({"error": "Could not generate the photo report."}), 500
 
