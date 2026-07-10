@@ -441,6 +441,19 @@ def run():
         cleanup_file(og_path)
 
 
+@bp.route("/preview/<name>")
+def preview_file(name):
+    """Serve a markup PDF inline (no Content-Disposition: attachment) so the
+    browser can render it in an iframe preview."""
+    safe = secure_filename(name)
+    if not safe or not safe.lower().endswith(".pdf"):
+        return "File not found", 404
+    filepath = os.path.join(_upload_dir(), safe)
+    if os.path.exists(filepath):
+        return send_file(filepath, mimetype="application/pdf")
+    return "File not found", 404
+
+
 @bp.route("/download/<name>")
 def download_file(name):
     """Serve a generated file from the upload dir. The marked-up carrier PDF is

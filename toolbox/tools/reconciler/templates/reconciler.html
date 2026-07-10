@@ -96,6 +96,11 @@
         <div class="rec-stat"><span class="rec-stat-num" id="stC">0</span><span class="rec-stat-lbl" id="stCLbl"></span><span class="rec-stat-sub" id="stCSub"></span></div>
       </div>
       <button class="btn btn-primary" id="dlMarkup">Download marked-up carrier estimate (PDF)</button>
+      <div id="markupPreviewWrap" style="display:none; margin-top:16px;">
+        <p class="panel-label">Marked-up estimate preview</p>
+        <p class="muted-note">The finished document with scope flags, quantity gaps, and the summary page. Links are not clickable in this viewer; use the download button for the interactive copy.</p>
+        <iframe id="markupPreviewFrame" title="Marked-up carrier estimate preview" style="width:100%;height:680px;border:1px solid var(--line);border-radius:4px;background:var(--sage-50);display:block;"></iframe>
+      </div>
       <div class="rec-post-crm">
         <button type="button" class="btn btn-secondary" id="postCrm" style="display:none;">Post marked-up estimate to CRM job</button>
         <div class="rec-crm-row" id="postDealRow" style="display:none;">
@@ -115,7 +120,7 @@
 
 {% block extra_scripts %}
 <script>
-  const REC_URLS = { run: "{{ url_for('reconciler.run') }}" };
+  const REC_URLS = { run: "{{ url_for('reconciler.run') }}", preview: "{{ url_for('reconciler.preview_file', name='__N__') }}" };
   const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}", upload: "{{ url_for('reconciler.crm_upload') }}", errorNote: "{{ url_for('reconciler.crm_error_note') }}" };
   let currentDeal = null;   // {id, title} once a CRM deal is searched or pasted
   let markupName = null;    // filename of the latest markup, for posting to the CRM
@@ -417,6 +422,13 @@
       $('logNote').textContent = data.log_path ? ('Full line-by-line breakdown logged to ' + data.log_path) : '';
       buildAlerts(data);
       wireDownload($('dlMarkup'), data.markup_download);
+      // Inline preview of the marked-up PDF
+      var markupFileName = decodeURIComponent(data.markup_download.split('/').pop());
+      var previewUrl = REC_URLS.preview.replace('__N__', encodeURIComponent(markupFileName));
+      var previewFrame = $('markupPreviewFrame');
+      var previewWrap = $('markupPreviewWrap');
+      if (previewFrame) previewFrame.src = previewUrl;
+      if (previewWrap) previewWrap.style.display = 'block';
       markupNote = data.crm_note || null;
       preparePostUi(data.markup_download);
       $('results').style.display = 'block';
