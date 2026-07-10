@@ -110,6 +110,12 @@ class SharedItem:
     carrier_rcv: float
     contractor_rcv: float
     rcv_delta: float               # contractor - carrier
+    # The quantity shortfall to flag, netted across every line of this base: the
+    # carrier can split a trade over several lines (two 1-EA window wraps) that
+    # together meet a contractor line listing the same total, so the per-pair
+    # quantity_delta above overstates it. Zero means the carrier already meets or
+    # exceeds the contractor on this base; only a positive value is a real gap.
+    net_quantity_gap: float = 0.0
 
 
 @dataclass
@@ -425,7 +431,7 @@ def build_narrative(recon):
     else:
         gap = round(recon.contractor_grand - recon.carrier_grand, 2)
         miss = [s for s in recon.suggestions if s.status == "MISSING"]
-        flagged = sum(1 for s in recon.shared if s.quantity_delta > 1e-6)
+        flagged = sum(1 for s in recon.shared if s.net_quantity_gap > 1e-6)
         out.append({"tone": "normal", "text":
             f"The contractor estimate is {_money0(gap)} higher than the carrier's, "
             f"{_money0(recon.contractor_grand)} against {_money0(recon.carrier_grand)}."})
@@ -620,6 +626,29 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
             carrier_rcv=cr.rcv,
             contractor_rcv=ci.rcv,
             rcv_delta=round(ci.rcv - cr.rcv, 2)))
+    # Net the under-measurement per base. The carrier can carry a trade across
+    # several lines (two 1-EA window wraps) that together meet a contractor line
+    # listing the same total, or carry more of a size the contractor lists once; a
+    # per-pair quantity_delta then reads a shortfall that does not exist. Compute the
+    # gap from base totals (contractor minus carrier) and hand it to the base's
+    # shared lines largest-first, so the flags sum to the real shortfall and none is
+    # flagged past it. A base the carrier meets or exceeds gets no flag.
+    car_qty, con_qty = {}, {}
+    for c in carrier.items:
+        car_qty[c.base] = car_qty.get(c.base, 0.0) + c.quantity
+    for it in contractor.items:
+        con_qty[it.base] = con_qty.get(it.base, 0.0) + it.quantity
+    base_of = {c.number: c.base for c in carrier.items}
+    by_base = {}
+    for s in shared:
+        by_base.setdefault(base_of.get(s.carrier_number), []).append(s)
+    for b, items in by_base.items():
+        remaining = max(0.0, round(con_qty.get(b, 0.0) - car_qty.get(b, 0.0), 2))
+        for s in sorted(items, key=lambda x: -x.quantity_delta):
+            take = min(max(0.0, s.quantity_delta), remaining) if s.quantity_delta > 0 else 0.0
+            s.net_quantity_gap = round(take, 2)
+            remaining = round(remaining - take, 2)
+
     scat_total = {}
     for s in shared:
         scat_total[s.category] = scat_total.get(s.category, 0.0) + abs(s.rcv_delta)
@@ -710,7 +739,11 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     # OR an existing line the carrier raised toward the contractor scope. Matching
     # og -> current, the unmatched current lines are the additions; matched pairs
     # whose RCV rose are the revisions. (match returns (current_item, og_item).)
-    matched_oc, added, dropped = match_line_items(og.items, carrier.items)
+    # No price guard here: this matches the carrier's original to its own current
+    # estimate, where the same line can be re-priced by a wide margin between the two
+    # (a genuine revision), unlike the cross-software carrier/contractor match.
+    matched_oc, added, dropped = match_line_items(og.items, carrier.items,
+                                                  price_guard=False)
     r.approved_added = list(added)
 
     # Index the contractor scope so a raised line can name the contractor line it

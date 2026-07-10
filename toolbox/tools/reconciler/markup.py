@@ -866,8 +866,8 @@ def _detail_pages(doc, recon, flagged, missing, page_of):
             c.row([f.description,
                    f"{_qty(f.carrier_quantity)} {unit}".strip(),
                    f"{_qty(f.contractor_quantity)} {unit}".strip(),
-                   _signed_qty(f.quantity_delta),
-                   _signed_money(round(f.quantity_delta * f.contractor_unit_price, 2)),
+                   _signed_qty(f.net_quantity_gap),
+                   _signed_money(round(f.net_quantity_gap * f.contractor_unit_price, 2)),
                    pref], cols, size=8.5, aligns=aligns)
     else:
         c.text("None. The carrier's quantities match the contractor on every shared "
@@ -1075,8 +1075,8 @@ def mark_up_carrier(carrier, recon, out_path: str) -> dict:
     painted into the right section). Returns a stats dict for logging.
     """
     flagged = sorted(
-        (s for s in recon.shared if s.quantity_delta > 1e-6),
-        key=lambda s: -(s.quantity_delta * s.contractor_unit_price))
+        (s for s in recon.shared if s.net_quantity_gap > 1e-6),
+        key=lambda s: -(s.net_quantity_gap * s.contractor_unit_price))
     missing = [s for s in recon.suggestions if s.status == "MISSING"]
 
     doc = fitz.open(carrier.path)
@@ -1096,7 +1096,7 @@ def mark_up_carrier(carrier, recon, out_path: str) -> dict:
         if not loc:
             continue
         located_flagged[f.carrier_number] = loc
-        gap = round(f.quantity_delta * f.contractor_unit_price, 2)
+        gap = round(f.net_quantity_gap * f.contractor_unit_price, 2)
         sev = severity_for(gap)
         flag_row(doc.load_page(loc[0]), loc[1], gap, sev)
 
