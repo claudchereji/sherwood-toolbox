@@ -487,32 +487,80 @@ def _section_totals(lines):
     return out
 
 
+# Revised / supplement estimates append a change-summary *tail* that reprints TOTAL
+# and 'Replacement Cost Value $x' lines for a net change: a 'Supplement ACV' /
+# 'Supplement Details' / 'Net Change For Supplement' summary (a 'TOTAL $271.15') and
+# a 'Payment Recap' that folds prior payments back in (a 'TOTAL $12,279.23'). The
+# tail is cut before any total is read, so its delta figures cannot outrank the
+# grand line. This is a document-tail cut: nothing after the first marker is a
+# grand figure, so it is safe to apply to the scalar reads as well.
+_SUPPLEMENT_MARKERS = re.compile(
+    r"Supplement ACV|Supplement Details|Net Change For Supplement|"
+    r"SUBTOTAL:\s*(?:ADDED|CHANGED)|Payment Recap", re.I)
+
+# A 'Paid When Incurred' coverage block reprints an already-included item's RCV
+# (Robinson's '$933.62'), which the per-coverage RCV summation would otherwise add
+# as if it were a new coverage. Its header is a section line ending in the phrase,
+# never the 'Total Paid When Incurred  933.62' summary line (which ends in a number)
+# nor the 'Replacement Cost Value  Paid When Incurred ...' column header. This block
+# can sit mid-estimate, before the grand tax/O&P recap, so it is cut ONLY for the
+# grand-RCV summation, not for the scalar reads.
+_PWI_HEADER = re.compile(r"^[^\n]*\bPaid When Incurred[ \t]*$", re.I | re.M)
+
+
+def _strip_supplement(text: str) -> str:
+    """Text with the supplement / change-summary tail removed (everything from the
+    first such marker on). Returns the text unchanged when no marker is present, so
+    ordinary and multi-coverage estimates are unaffected."""
+    m = _SUPPLEMENT_MARKERS.search(text)
+    return text[:m.start()] if m else text
+
+
 def grand_rcv(text: str, line_sum: float) -> float:
     """The estimate's grand Replacement Cost Value (includes tax and O&P).
 
-    Carriers print this total in one of three shapes, tried most-authoritative
-    first. Verified across the sample corpus to land on the recap total to the
-    cent (Gritzman 32,813.71, Esposito 36,445.82, Diaz 12,618.27, ...):
+    Read from the main estimate body; the supplement change-summary tail and any
+    'Paid When Incurred' block are cut first so their delta and already-included
+    subset figures cannot be mistaken for, or added into, the grand total.
 
-      1. A grand 'TOTAL $x' recap row (Allstate 'Loss Recap Summary').
+    Carriers print the grand total in one of three shapes, tried most-authoritative
+    first. Verified across the sample corpus to land on the recap total to the cent
+    (Gritzman 29,114.57, Esposito 36,445.82, Diaz 12,618.27, ...):
+
+      1. A grand 'TOTAL $x' recap row (Allstate 'Loss Recap Summary'), taken only
+         when it is at least the parsed line-item RCV sum. The grand adds tax and
+         O&P on top of the line items, so it never falls below their sum; the floor
+         rejects a supplement's small net-change 'TOTAL $271.15' row.
       2. Per-coverage 'Replacement Cost Value $x' summary lines, summed over the
-         distinct values (page-break echoes repeat a coverage's total verbatim;
-         two distinct coverages matching to the cent is vanishingly rare).
+         distinct values (page-break echoes repeat a coverage's total verbatim; two
+         distinct coverages matching to the cent is vanishingly rare).
       3. The 'Line Item Totals:' row, where the RCV column is the value V with a
          following depreciation D and actual-cash-value A such that V - D = A.
 
     Falls back to the parsed line-item RCV sum when none of the above is present.
     """
-    m = RCV_TOTAL_ROW.search(text)
-    if m:
-        return _fnum(m.group(1))
+    body = _strip_supplement(text)
+    mp = _PWI_HEADER.search(body)
+    if mp:
+        body = body[:mp.start()]
 
-    rcv_vals = [_fnum(x) for x in RCV_LINE.findall(text)]
+    # 1. Allstate 'Loss Recap Summary' grand TOTAL row, first one at or above the
+    #    line-item sum (a supplement's small 'TOTAL $271.15' net-change row is below
+    #    it and is rejected).
+    for m in RCV_TOTAL_ROW.finditer(body):
+        v = _fnum(m.group(1))
+        if v >= line_sum - 0.02:
+            return round(v, 2)
+
+    # 2. Per-coverage 'Replacement Cost Value $x' lines summed over distinct values.
+    rcv_vals = [_fnum(x) for x in RCV_LINE.findall(body)]
     if rcv_vals:
         return round(sum(set(rcv_vals)), 2)
 
+    # 3. The 'Line Item Totals:' row (identity V - D = A), for carriers that print
+    #    no labelled 'Replacement Cost Value' line.
     best = None
-    for row in LINE_ITEM_TOTALS_ROW.findall(text):
+    for row in LINE_ITEM_TOTALS_ROW.findall(body):
         nums = [_fnum(x) for x in _MONEY_TOK.findall(row)]
         r = _rcv_from_row(nums)
         if r is not None and (best is None or r > best):
@@ -963,7 +1011,11 @@ def extract_estimate(path: str, role: str) -> Estimate:
         #     ocr = True
 
     items, fmt = parse_items(text)
-    has_op, overhead, profit = detect_op(text)
+    # Scalar grand figures (O&P, tax, net claim, line-item total) are read from the
+    # main body with any supplement / change-summary blocks stripped, so a delta or
+    # already-included subset figure cannot outrank the grand line.
+    body = _strip_supplement(text)
+    has_op, overhead, profit = detect_op(body)
     line_sum = round(sum(i.rcv for i in items), 2)
     grand = grand_rcv(text, line_sum)
 
@@ -980,9 +1032,9 @@ def extract_estimate(path: str, role: str) -> Estimate:
         items=items,
         grand_rcv=grand,
         rcv_line_sum=line_sum,
-        net_claim=max(_amts(NET_CLAIM, text), default=0.0),
-        line_item_total=max(_amts(LINE_ITEM_TOTAL, text), default=0.0),
-        sales_tax=max(_amts(TAX_LINE, text), default=0.0),
+        net_claim=max(_amts(NET_CLAIM, body), default=0.0),
+        line_item_total=max(_amts(LINE_ITEM_TOTAL, body), default=0.0),
+        sales_tax=max(_amts(TAX_LINE, body), default=0.0),
         has_op=has_op, overhead=overhead, profit=profit,
         recap=parse_recap(text),
         parse_ratio=ratio,

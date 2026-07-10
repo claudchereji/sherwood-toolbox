@@ -163,6 +163,7 @@
       if ($('include_nts').checked) total += 150.00;
       lineRows().forEach(r => { total += parseFloat(r.amount) || 0; });
       $('grandTotal').textContent = total.toFixed(2);
+      console.log('[docs] recalc:', {total: total.toFixed(2), lines: lineRows().length});
     }, 80);
   }
 

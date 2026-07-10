@@ -425,6 +425,7 @@
       // Inline preview of the marked-up PDF
       var markupFileName = decodeURIComponent(data.markup_download.split('/').pop());
       var previewUrl = REC_URLS.preview.replace('__N__', encodeURIComponent(markupFileName));
+      console.log('[rec] preview wiring:', {markupFileName: markupFileName, previewUrl: previewUrl, downloadUrl: data.markup_download});
       var previewFrame = $('markupPreviewFrame');
       var previewWrap = $('markupPreviewWrap');
       if (previewFrame) previewFrame.src = previewUrl;

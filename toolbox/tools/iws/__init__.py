@@ -26,6 +26,8 @@ def index():
 def export_pdf():
     """Generate a one-page PDF summary of the IWS calculation."""
     data = request.get_json(silent=True) or {}
+    print(f"[iws] pdf export: project={data.get('projectName')}, "
+          f"actual={data.get('actualTotal')}, full_roll={data.get('fullRollTotal')}")
     project_name = (data.get("projectName") or "Untitled Project").strip()
     project_address = (data.get("projectAddress") or "").strip()
     actual_total = data.get("actualTotal", 0)

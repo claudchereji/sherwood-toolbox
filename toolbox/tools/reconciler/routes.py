@@ -446,10 +446,13 @@ def preview_file(name):
     """Serve a markup PDF inline (no Content-Disposition: attachment) so the
     browser can render it in an iframe preview."""
     safe = secure_filename(name)
+    print(f"[reconciler] preview: requested={name}, safe={safe}")
     if not safe or not safe.lower().endswith(".pdf"):
         return "File not found", 404
     filepath = os.path.join(_upload_dir(), safe)
-    if os.path.exists(filepath):
+    exists = os.path.exists(filepath)
+    print(f"[reconciler] preview: filepath={filepath}, exists={exists}")
+    if exists:
         return send_file(filepath, mimetype="application/pdf")
     return "File not found", 404
 

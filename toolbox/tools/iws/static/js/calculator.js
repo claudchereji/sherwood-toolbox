@@ -524,6 +524,7 @@
 
         els.savePdfBtn.disabled = true;
         els.savePdfBtn.textContent = 'Generating...';
+        console.log('[iws] pdf export:', {project: inputs.projectName, actual: actual.total, fullRoll: fullRoll.total});
 
         fetch('/iws/pdf', {
             method: 'POST',

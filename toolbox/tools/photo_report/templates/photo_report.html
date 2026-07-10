@@ -227,6 +227,7 @@
         }
       });
       fd.append('photo_captions', JSON.stringify(captionsArr));
+      console.log('[pr] submit:', {photoCount: photoOrder.length, captions: captionsArr});
       const r = await fetch(PR.generate, { method: 'POST', body: fd });
       const ct = r.headers.get('content-type') || '';
       if (ct.includes('application/pdf')) {

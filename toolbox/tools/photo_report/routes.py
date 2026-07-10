@@ -19,7 +19,8 @@ from restoration_common import (PhotoReportPDF, get_company_by_id, load_companie
 
 from ...core.crm import fetch_job_info
 
-bp = Blueprint("photo_report", __name__, template_folder="templates")
+bp = Blueprint("photo_report", __name__, template_folder="templates",
+               static_folder="static", static_url_path="static")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
 
@@ -67,6 +68,9 @@ def generate():
         captions = json.loads(form.get("photo_captions", "[]") or "[]")
     except (json.JSONDecodeError, TypeError):
         captions = []
+    print(f"[photo_report] generate: company={company.get('id')}, "
+          f"customer={job_info['customer_name']}, images={len(images)}, "
+          f"captions={len(captions)}, caption_data={captions[:3]}")
 
     temp_dir = tempfile.mkdtemp(prefix="toolbox_photo_")
     try:
@@ -89,6 +93,7 @@ def generate():
                 cap = (captions[i] if i < len(captions) else "").strip()
                 fname = os.path.basename(path)
                 display_names.append(f"{cap}  |  {fname}" if cap else fname)
+            print(f"[photo_report] captions applied: {display_names[:3]}")
             # Monkey-patch the display names into the generate flow by
             # overriding _create_page's default filename behavior.
             _orig_create_page = gen._create_page

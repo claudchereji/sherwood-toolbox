@@ -138,6 +138,12 @@ def progress(filename):
     upload = _upload_dir()
     output_pdf = os.path.join(upload, safe + '.output.pdf')
     linked_pdf = os.path.join(upload, safe.replace('.pdf', '') + '_linked.pdf')
+    original = os.path.join(upload, safe)
+    output_exists = os.path.exists(output_pdf)
+    linked_exists = os.path.exists(linked_pdf)
+    original_exists = os.path.exists(original)
+    print(f"[ee] progress: file={safe}, output={output_exists}, "
+          f"linked={linked_exists}, original={original_exists}")
     # The fork writes _linked.pdf; once it exists, processing is done.
     if os.path.exists(output_pdf):
         return jsonify({'status': 'done'})

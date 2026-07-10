@@ -26,6 +26,13 @@ from .match import match_line_items, section_tokens
 
 
 def base(it) -> float:
+    # The line's pre-O&P, pre-tax dollars (quantity x unit_price). The bridge adds
+    # op_gap and tax_gap on top, so base must EXCLUDE O&P and tax; it cannot use
+    # it.rcv, whose per-line value carries a distributed share of O&P and tax on
+    # contractor estimates (summing rcv would double-count them against op_gap /
+    # tax_gap). Bid-item rows (asterisk/E markers) print a real per-unit price in
+    # practice (e.g. '2 EA @ 3727.00'), so quantity x unit_price is the true line
+    # total here, not an inflated re-multiplication.
     return round(it.quantity * it.unit_price, 2)
 
 
@@ -664,8 +671,9 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
 # "approved" checks. Signal A: the original must parse most of its own grand total
 # into line items, or its line list is too incomplete to diff against. Signal B: the
 # summed RCV of the "added" lines must stay within a factor (plus a small absolute
-# margin, so small claims do not trip) of the grand-total approval delta, or the
-# match is producing phantom additions. Either signal marks the diff unreliable.
+# margin, so small claims do not trip) of what the totals can explain, which is the
+# net grand-total increase PLUS the scope the carrier removed (a revision can add
+# new lines while dropping old ones). Either signal marks the diff unreliable.
 OG_MIN_PARSE_RATIO = 0.80
 ADDED_SUM_FACTOR = 1.5
 ADDED_SUM_MARGIN = 500.0
@@ -702,7 +710,7 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     # OR an existing line the carrier raised toward the contractor scope. Matching
     # og -> current, the unmatched current lines are the additions; matched pairs
     # whose RCV rose are the revisions. (match returns (current_item, og_item).)
-    matched_oc, added, _dropped = match_line_items(og.items, carrier.items)
+    matched_oc, added, dropped = match_line_items(og.items, carrier.items)
     r.approved_added = list(added)
 
     # Index the contractor scope so a raised line can name the contractor line it
@@ -745,6 +753,11 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     # line-diff sets and drives the block in routes.py. The grand-total approval math
     # (approved_dollars, ask_dollars, effectiveness) is unaffected and stays.
     added_sum = round(sum(it.rcv for it in added), 2)
+    dropped_sum = round(sum(it.rcv for it in dropped), 2)
+    # Gross additions are plausible up to the net grand increase PLUS the scope the
+    # carrier removed: a revision can add new lines while dropping old ones, so the
+    # net delta alone understates legitimate additions.
+    plausible_added = max(r.approved_dollars, 0.0) + dropped_sum
     if og.parse_ratio < OG_MIN_PARSE_RATIO:
         r.og_line_diff_unreliable = True
         r.og_line_diff_reason = (
@@ -752,14 +765,13 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
             f"of its {_money0(og.grand_rcv)} total (parse_ratio "
             f"{og.parse_ratio:.2f}); its line items cannot be trusted, so the "
             f"per-item approvals could not be identified")
-    elif added and (r.approved_dollars <= 0 or
-                    added_sum > r.approved_dollars * ADDED_SUM_FACTOR + ADDED_SUM_MARGIN):
+    elif added and added_sum > plausible_added * ADDED_SUM_FACTOR + ADDED_SUM_MARGIN:
         r.og_line_diff_unreliable = True
         r.og_line_diff_reason = (
-            f"the added-lines total ({_money0(added_sum)}) far exceeds the "
-            f"approved-to-date delta ({_money0(r.approved_dollars)}) from the grand "
-            f"totals; the original-vs-current line match is unreliable, so the "
-            f"per-item approvals could not be identified")
+            f"the added-lines total ({_money0(added_sum)}) exceeds what the grand-total "
+            f"increase ({_money0(r.approved_dollars)}) and the {_money0(dropped_sum)} of "
+            f"scope the carrier removed can explain; the original-vs-current line match "
+            f"is unreliable, so the per-item approvals could not be identified")
     if r.og_line_diff_unreliable:
         r.approved_added = []
         r.approved_wins = []

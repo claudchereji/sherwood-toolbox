@@ -63,6 +63,7 @@
   <script>
     function showToast(message, type) {
       type = type || 'info';
+      console.log('[toast]', type, message);
       var container = document.getElementById('toast-container');
       if (!container) return;
       var toast = document.createElement('div');
