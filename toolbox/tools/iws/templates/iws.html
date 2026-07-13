@@ -168,8 +168,7 @@
     let currentDealId = null;
 
     function extractDealId(input) {
-      if (/^\d+$/.test(input)) return input;
-      const m = input.match(/\/crm\/opportunity\/(\d+)/);
+      const m = input.match(/[?&]id=(\d+)/i) || input.match(/opportunity\/(\d+)/i) || (/^\d{2,}$/.test(input.trim()) ? [null, input.trim()] : null);
       return m ? m[1] : null;
     }
 
@@ -178,6 +177,10 @@
       if (!query) {
         document.getElementById("crmDeals").innerHTML = "";
         return;
+      }
+      const dealId = extractDealId(query);
+      if (dealId) {
+        return crmLoadInfo(dealId);
       }
       fetch(IWS.crmSearch, {
         method: "POST",
@@ -193,7 +196,7 @@
     }
 
     function renderDeals(deals) {
-      if (!deals.length) {
+      if (!deals || !Array.isArray(deals) || !deals.length) {
         document.getElementById("crmDeals").innerHTML = "<p>No deals found.</p>";
         return;
       }
@@ -201,7 +204,7 @@
         .map(d => `
           <button type="button" class="deal-btn" data-deal-id="${d.id}">
             <strong>${d.name}</strong><br>
-            <small>${d.city}, ${d.stage}</small>
+            <small>${d.city || ""}, ${d.stage || ""}</small>
           </button>
         `)
         .join("");
