@@ -180,6 +180,14 @@ def _is_data_cont(line: str) -> bool:
     s = line.strip()
     if not s or _is_note(line):
         return False
+    # A numeric record line may carry condition/depreciation column glyphs the
+    # per-token scan does not enumerate ('100% [M]' on a fully-depreciated line) or
+    # lead with a Xactimate variable label. A 'qty UNIT ... money' signature marks
+    # it as data unambiguously; without this accept the whole item is dropped, and a
+    # line the original omits but the revision keeps reads as a false addition.
+    qm = QTY_UNIT.search(s)
+    if qm and qm.group(2).upper() in UNITS and MONEY.search(s[qm.end():]):
+        return True
     toks = s.split()
     if not any(ch.isdigit() for ch in s):
         return False
@@ -487,32 +495,128 @@ def _section_totals(lines):
     return out
 
 
+# Revised / supplement estimates append a change-summary *tail* that reprints TOTAL
+# and 'Replacement Cost Value $x' lines for a net change: a 'Supplement ACV' /
+# 'Supplement Details' / 'Net Change For Supplement' summary (a 'TOTAL $271.15') and
+# a 'Payment Recap' that folds prior payments back in (a 'TOTAL $12,279.23'). The
+# tail is cut before any total is read, so its delta figures cannot outrank the
+# grand line. This is a document-tail cut: nothing after the first marker is a
+# grand figure, so it is safe to apply to the scalar reads as well.
+_SUPPLEMENT_MARKERS = re.compile(
+    r"Supplement ACV|Supplement Details|Net Change For Supplement|"
+    r"SUBTOTAL:\s*(?:ADDED|CHANGED)|Payment Recap", re.I)
+
+# A 'Paid When Incurred' coverage block reprints an already-included item's RCV
+# (Robinson's '$933.62'), which the per-coverage RCV summation would otherwise add
+# as if it were a new coverage. Its header is a section line ending in the phrase,
+# never the 'Total Paid When Incurred  933.62' summary line (which ends in a number)
+# nor the 'Replacement Cost Value  Paid When Incurred ...' column header. This block
+# can sit mid-estimate, before the grand tax/O&P recap, so it is cut ONLY for the
+# grand-RCV summation, not for the scalar reads.
+_PWI_HEADER = re.compile(r"^[^\n]*\bPaid When Incurred[ \t]*$", re.I | re.M)
+
+
+def _strip_supplement(text: str) -> str:
+    """Text with the supplement / change-summary tail removed (everything from the
+    first such marker on). Returns the text unchanged when no marker is present, so
+    ordinary and multi-coverage estimates are unaffected."""
+    m = _SUPPLEMENT_MARKERS.search(text)
+    return text[:m.start()] if m else text
+
+
+# A coverage summary block prints 'Line Item Total <x>' ... 'Replacement Cost
+# Value $<rcv>' once per coverage. Anchoring the RCV read to that block (rather than
+# a bare phrase) keeps legend sentences and per-line echoes out, and lets a
+# multi-coverage grand be summed as the carrier itself totals it.
+_LINE_ITEM_TOTAL_ANCHOR = re.compile(r"Line Item Total\b", re.I)
+_PWI_MARK = re.compile(r"Paid When Incurred", re.I)
+
+
+def _rcv_triples(text: str):
+    """Every value V on a line that participates in an RCV = ACV + Depreciation
+    triple: three consecutive money magnitudes (V, D, A) with V - D == A and V the
+    largest. The layout-independent signature of a totals/recap RCV column, true of
+    Allstate, USAA, State Farm and Symbility recap rows alike."""
+    out = []
+    for ln in text.splitlines():
+        mags = [abs(_num(m.group(0))) for m in MONEY.finditer(ln)]
+        for i in range(len(mags) - 2):
+            V, D, A = mags[i], mags[i + 1], mags[i + 2]
+            if V > 100 and D >= 0 and A >= 0 and V >= D and abs((V - D) - A) < 0.02:
+                out.append(round(V, 2))
+    return out
+
+
+def _coverage_blocks(text: str):
+    """Per-coverage RCV summary values as (value, is_paid_when_incurred). A value is
+    counted only when a 'Line Item Total' line sits just above it (a real coverage
+    summary, not a legend), and is flagged PWI when a 'Total Paid When Incurred' line
+    sits just below (a held-back bucket the carrier excludes from the recoverable
+    grand). Near-duplicate values within a few lines are page-break echoes, counted
+    once."""
+    lines = text.splitlines()
+    blocks, last = [], {}
+    for i, ln in enumerate(lines):
+        m = RCV_LINE.search(ln)
+        if not m:
+            continue
+        if not any(_LINE_ITEM_TOTAL_ANCHOR.search(lines[j])
+                   for j in range(max(0, i - 8), i)):
+            continue
+        val = _fnum(m.group(1))
+        if val in last and i - last[val] <= 4:      # page-break echo of same block
+            last[val] = i
+            continue
+        last[val] = i
+        pwi = any(_PWI_MARK.search(lines[j]) for j in range(i + 1, min(i + 4, len(lines))))
+        blocks.append((round(val, 2), pwi))
+    return blocks
+
+
 def grand_rcv(text: str, line_sum: float) -> float:
     """The estimate's grand Replacement Cost Value (includes tax and O&P).
 
-    Carriers print this total in one of three shapes, tried most-authoritative
-    first. Verified across the sample corpus to land on the recap total to the
-    cent (Gritzman 32,813.71, Esposito 36,445.82, Diaz 12,618.27, ...):
+    Verified across the sample corpus to land on the recap total to the cent
+    (Gritzman 29,114.57, Esposito 36,445.82, Diaz 12,618.27, ...). Sources, tried
+    most-authoritative first:
 
-      1. A grand 'TOTAL $x' recap row (Allstate 'Loss Recap Summary').
-      2. Per-coverage 'Replacement Cost Value $x' summary lines, summed over the
-         distinct values (page-break echoes repeat a coverage's total verbatim;
-         two distinct coverages matching to the cent is vanishingly rare).
-      3. The 'Line Item Totals:' row, where the RCV column is the value V with a
-         following depreciation D and actual-cash-value A such that V - D = A.
+      1. A grand 'TOTAL $x' recap row (Allstate 'Loss Recap Summary'), taken only
+         when it is at least the parsed line-item RCV sum. The grand adds tax and
+         O&P on top of the line items, so it never falls below their sum; the floor
+         rejects a supplement's small net-change 'TOTAL $271.15' row.
+      2. The larger of the per-coverage RCV sum (excluding Paid-When-Incurred
+         buckets) and the largest RCV = ACV + Depreciation recap triple. The
+         coverage sum totals a multi-coverage estimate the way the carrier does and
+         carries coverage-level tax (Allstate); the triple is the printed grand
+         where per-line RCV already includes O&P and tax (USAA/State Farm) and a
+         cross-check that a missed coverage does not undercount. This replaces the
+         old sum-of-distinct-'Replacement Cost Value' logic, which a blanket
+         Paid-When-Incurred cut truncated to the first coverage (Souser revised
+         read 42,387 instead of 49,464).
+      3. The 'Line Item Totals:' row (identity V - D = A), for carriers that print
+         no labelled 'Replacement Cost Value' line.
 
     Falls back to the parsed line-item RCV sum when none of the above is present.
     """
-    m = RCV_TOTAL_ROW.search(text)
-    if m:
-        return _fnum(m.group(1))
+    body = _strip_supplement(text)
 
-    rcv_vals = [_fnum(x) for x in RCV_LINE.findall(text)]
-    if rcv_vals:
-        return round(sum(set(rcv_vals)), 2)
+    # 1. Allstate 'Loss Recap Summary' grand TOTAL row.
+    for m in RCV_TOTAL_ROW.finditer(body):
+        v = _fnum(m.group(1))
+        if v >= line_sum - 0.02:
+            return round(v, 2)
 
+    # 2. Coverage sum (PWI excluded) cross-checked with the largest recap triple.
+    blocks = _coverage_blocks(body)
+    cov_excl = round(sum(v for v, p in blocks if not p), 2)
+    if cov_excl > 0:
+        triples = _rcv_triples(body)
+        triple = round(max(triples), 2) if triples else 0.0
+        return max(cov_excl, triple)
+
+    # 3. The 'Line Item Totals:' row identity, else the largest recap triple.
     best = None
-    for row in LINE_ITEM_TOTALS_ROW.findall(text):
+    for row in LINE_ITEM_TOTALS_ROW.findall(body):
         nums = [_fnum(x) for x in _MONEY_TOK.findall(row)]
         r = _rcv_from_row(nums)
         if r is not None and (best is None or r > best):
@@ -522,6 +626,9 @@ def grand_rcv(text: str, line_sum: float) -> float:
     if best is not None:
         return round(best, 2)
 
+    triples = _rcv_triples(body)
+    if triples:
+        return round(max(triples), 2)
     return line_sum
 
 
@@ -963,7 +1070,11 @@ def extract_estimate(path: str, role: str) -> Estimate:
         #     ocr = True
 
     items, fmt = parse_items(text)
-    has_op, overhead, profit = detect_op(text)
+    # Scalar grand figures (O&P, tax, net claim, line-item total) are read from the
+    # main body with any supplement / change-summary blocks stripped, so a delta or
+    # already-included subset figure cannot outrank the grand line.
+    body = _strip_supplement(text)
+    has_op, overhead, profit = detect_op(body)
     line_sum = round(sum(i.rcv for i in items), 2)
     grand = grand_rcv(text, line_sum)
 
@@ -980,9 +1091,9 @@ def extract_estimate(path: str, role: str) -> Estimate:
         items=items,
         grand_rcv=grand,
         rcv_line_sum=line_sum,
-        net_claim=max(_amts(NET_CLAIM, text), default=0.0),
-        line_item_total=max(_amts(LINE_ITEM_TOTAL, text), default=0.0),
-        sales_tax=max(_amts(TAX_LINE, text), default=0.0),
+        net_claim=max(_amts(NET_CLAIM, body), default=0.0),
+        line_item_total=max(_amts(LINE_ITEM_TOTAL, body), default=0.0),
+        sales_tax=max(_amts(TAX_LINE, body), default=0.0),
         has_op=has_op, overhead=overhead, profit=profit,
         recap=parse_recap(text),
         parse_ratio=ratio,

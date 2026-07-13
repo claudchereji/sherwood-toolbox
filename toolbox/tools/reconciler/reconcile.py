@@ -26,6 +26,13 @@ from .match import match_line_items, section_tokens
 
 
 def base(it) -> float:
+    # The line's pre-O&P, pre-tax dollars (quantity x unit_price). The bridge adds
+    # op_gap and tax_gap on top, so base must EXCLUDE O&P and tax; it cannot use
+    # it.rcv, whose per-line value carries a distributed share of O&P and tax on
+    # contractor estimates (summing rcv would double-count them against op_gap /
+    # tax_gap). Bid-item rows (asterisk/E markers) print a real per-unit price in
+    # practice (e.g. '2 EA @ 3727.00'), so quantity x unit_price is the true line
+    # total here, not an inflated re-multiplication.
     return round(it.quantity * it.unit_price, 2)
 
 
@@ -103,6 +110,12 @@ class SharedItem:
     carrier_rcv: float
     contractor_rcv: float
     rcv_delta: float               # contractor - carrier
+    # The quantity shortfall to flag, netted across every line of this base: the
+    # carrier can split a trade over several lines (two 1-EA window wraps) that
+    # together meet a contractor line listing the same total, so the per-pair
+    # quantity_delta above overstates it. Zero means the carrier already meets or
+    # exceeds the contractor on this base; only a positive value is a real gap.
+    net_quantity_gap: float = 0.0
 
 
 @dataclass
@@ -135,6 +148,11 @@ class Recon:
     approved_wins: list = field(default_factory=list)  # current-carrier LineItems approved (added + revised)
     approved_added: list = field(default_factory=list)  # subset: brand-new current-carrier lines
     approved_revised: list = field(default_factory=list)  # ApprovedRevision: raised existing lines
+    # Set when the original-vs-current line match cannot be trusted (a scanned/OCR
+    # original whose line table did not parse). The approved_* sets above are then
+    # blanked and the caller blocks the run; the grand-total approval math is kept.
+    og_line_diff_unreliable: bool = False
+    og_line_diff_reason: str = ""
     narrative: list = field(default_factory=list)  # plain-language summary [{text, tone}]
     # Section-total reconciliation: the outstanding per contractor section is the
     # difference of the printed section subtotals, so grade revisions (a renamed
@@ -385,11 +403,9 @@ def coverage_limit_hypothesis(carrier, contractor, missing, og=None):
 
 def build_narrative(recon):
     """Set recon.narrative: two or three plain sentences a reader can take in at a
-    glance, with the coverage-sublimit warning called out. Deterministic (no model
-    call); qualitative words are picked from the numbers. The statistical tiles
-    stay below it for anyone verifying the math."""
+    glance. Deterministic (no model call); qualitative words are picked from the
+    numbers. The statistical tiles stay below it for anyone verifying the math."""
     out = []
-    clh = next((h for h in recon.hypotheses if h.theme == "COVERAGE_LIMIT"), None)
 
     if recon.mode == "effectiveness":
         pct = round(recon.effectiveness * 100)
@@ -408,12 +424,10 @@ def build_narrative(recon):
             f"checked in green on the carrier pages. {out_count} contractor "
             f"line{'s are' if out_count != 1 else ' is'} still missing, painted in blue and each "
             f"keyed to the contractor line that carries it."})
-        if clh:
-            out.append({"tone": "caution", "text": _secondary_caution(clh)})
     else:
         gap = round(recon.contractor_grand - recon.carrier_grand, 2)
         miss = [s for s in recon.suggestions if s.status == "MISSING"]
-        flagged = sum(1 for s in recon.shared if s.quantity_delta > 1e-6)
+        flagged = sum(1 for s in recon.shared if s.net_quantity_gap > 1e-6)
         out.append({"tone": "normal", "text":
             f"The contractor estimate is {_money0(gap)} higher than the carrier's, "
             f"{_money0(recon.contractor_grand)} against {_money0(recon.carrier_grand)}."})
@@ -425,20 +439,7 @@ def build_narrative(recon):
             line2 += (f" The carrier also measured {flagged} shared "
                       f"line{'s' if flagged != 1 else ''} short of the contractor.")
         out.append({"tone": "normal", "text": line2})
-        if clh:
-            out.append({"tone": "caution", "text": _secondary_caution(clh)})
     recon.narrative = out
-
-
-def _secondary_caution(clh):
-    """The plain-language secondary-structure policy-limit caution, from the
-    coverage-limit hypothesis. Fires on any denied secondary-structure scope."""
-    return (
-        f"One caution. {_money0(clh.dollars)} of the missing scope is on a secondary "
-        f"structure (a detached building, shed, or garage). If the policy caps that "
-        f"structure with a separate limit, anything on the scope that is pushed past the "
-        f"limit would not necessarily raise the payout. Check the remaining limit before "
-        f"pursuing those items.")
 
 
 # --------------------------------------------------------------------------- #
@@ -608,6 +609,29 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
             carrier_rcv=cr.rcv,
             contractor_rcv=ci.rcv,
             rcv_delta=round(ci.rcv - cr.rcv, 2)))
+    # Net the under-measurement per base. The carrier can carry a trade across
+    # several lines (two 1-EA window wraps) that together meet a contractor line
+    # listing the same total, or carry more of a size the contractor lists once; a
+    # per-pair quantity_delta then reads a shortfall that does not exist. Compute the
+    # gap from base totals (contractor minus carrier) and hand it to the base's
+    # shared lines largest-first, so the flags sum to the real shortfall and none is
+    # flagged past it. A base the carrier meets or exceeds gets no flag.
+    car_qty, con_qty = {}, {}
+    for c in carrier.items:
+        car_qty[c.base] = car_qty.get(c.base, 0.0) + c.quantity
+    for it in contractor.items:
+        con_qty[it.base] = con_qty.get(it.base, 0.0) + it.quantity
+    base_of = {c.number: c.base for c in carrier.items}
+    by_base = {}
+    for s in shared:
+        by_base.setdefault(base_of.get(s.carrier_number), []).append(s)
+    for b, items in by_base.items():
+        remaining = max(0.0, round(con_qty.get(b, 0.0) - car_qty.get(b, 0.0), 2))
+        for s in sorted(items, key=lambda x: -x.quantity_delta):
+            take = min(max(0.0, s.quantity_delta), remaining) if s.quantity_delta > 0 else 0.0
+            s.net_quantity_gap = round(take, 2)
+            remaining = round(remaining - take, 2)
+
     scat_total = {}
     for s in shared:
         scat_total[s.category] = scat_total.get(s.category, 0.0) + abs(s.rcv_delta)
@@ -655,6 +679,17 @@ def reconcile_matched(carrier, contractor, claimant, playbook=None):
 # Effectiveness mode (three-way: original carrier, current carrier, contractor)
 # --------------------------------------------------------------------------- #
 
+# Trust thresholds for the original-vs-current line diff that drives the green
+# "approved" checks. Signal A: the original must parse most of its own grand total
+# into line items, or its line list is too incomplete to diff against. Signal B: the
+# summed RCV of the "added" lines must stay within a factor (plus a small absolute
+# margin, so small claims do not trip) of what the totals can explain, which is the
+# net grand-total increase PLUS the scope the carrier removed (a revision can add
+# new lines while dropping old ones). Either signal marks the diff unreliable.
+OG_MIN_PARSE_RATIO = 0.80
+ADDED_SUM_FACTOR = 1.5
+ADDED_SUM_MARGIN = 500.0
+
 def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     """Measure how much of the contractor's supplement the carrier has approved.
 
@@ -687,7 +722,11 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     # OR an existing line the carrier raised toward the contractor scope. Matching
     # og -> current, the unmatched current lines are the additions; matched pairs
     # whose RCV rose are the revisions. (match returns (current_item, og_item).)
-    matched_oc, added, _dropped = match_line_items(og.items, carrier.items)
+    # No price guard here: this matches the carrier's original to its own current
+    # estimate, where the same line can be re-priced by a wide margin between the two
+    # (a genuine revision), unlike the cross-software carrier/contractor match.
+    matched_oc, added, dropped = match_line_items(og.items, carrier.items,
+                                                  price_guard=False)
     r.approved_added = list(added)
 
     # Index the contractor scope so a raised line can name the contractor line it
@@ -699,9 +738,21 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
 
     revised = []
     for cur, og_it in matched_oc:
-        delta = round(cur.rcv - og_it.rcv, 2)
-        if delta < 1.0:                       # only lines the carrier raised
+        # A genuine revision changes the line's SCOPE: a different quantity or unit
+        # price. When both are unchanged, the line is identical scope and any RCV
+        # move is the carrier applying sales tax or O&P at the coverage level (which
+        # some carriers distribute into per-line RCV, e.g. Quilatan). That is not an
+        # approval and must not paint a green "raised" mark, or the per-item markup
+        # diverges from the grand-total approval math that is reliable to the cent.
+        qty_same = abs(cur.quantity - og_it.quantity) < 0.005
+        price_same = abs(cur.unit_price - og_it.unit_price) < 0.005
+        if qty_same and price_same:
             continue
+        base_delta = round(cur.quantity * cur.unit_price
+                           - og_it.quantity * og_it.unit_price, 2)
+        if base_delta < 1.0:                  # only lines the carrier raised in scope
+            continue
+        delta = round(cur.rcv - og_it.rcv, 2)
         cq = cr = 0.0
         cand = con_by_base.get(cur.base) or []
         if cand:                              # closest contractor quantity
@@ -720,6 +771,39 @@ def reconcile_effectiveness(og, carrier, contractor, claimant, playbook=None):
     revised_nums = {x.number for x in revised}
     r.approved_wins = list(added) + [it for it in carrier.items
                                      if it.number in revised_nums]
+
+    # Trust guard: the approved_added / approved_wins / approved_revised sets above
+    # all come from matching the current carrier against the ORIGINAL carrier. When
+    # the original did not parse into a credible line list (a scanned/OCR original
+    # whose totals read cleanly while the table body is garbled), that match is
+    # meaningless: nearly every current line looks "added", so it must not paint
+    # green "approved" checks. Two independent signals flag it; either one blanks the
+    # line-diff sets and drives the block in routes.py. The grand-total approval math
+    # (approved_dollars, ask_dollars, effectiveness) is unaffected and stays.
+    added_sum = round(sum(it.rcv for it in added), 2)
+    dropped_sum = round(sum(it.rcv for it in dropped), 2)
+    # Gross additions are plausible up to the net grand increase PLUS the scope the
+    # carrier removed: a revision can add new lines while dropping old ones, so the
+    # net delta alone understates legitimate additions.
+    plausible_added = max(r.approved_dollars, 0.0) + dropped_sum
+    if og.parse_ratio < OG_MIN_PARSE_RATIO:
+        r.og_line_diff_unreliable = True
+        r.og_line_diff_reason = (
+            f"the original carrier estimate parsed only {_money0(og.rcv_line_sum)} "
+            f"of its {_money0(og.grand_rcv)} total (parse_ratio "
+            f"{og.parse_ratio:.2f}); its line items cannot be trusted, so the "
+            f"per-item approvals could not be identified")
+    elif added and added_sum > plausible_added * ADDED_SUM_FACTOR + ADDED_SUM_MARGIN:
+        r.og_line_diff_unreliable = True
+        r.og_line_diff_reason = (
+            f"the added-lines total ({_money0(added_sum)}) exceeds what the grand-total "
+            f"increase ({_money0(r.approved_dollars)}) and the {_money0(dropped_sum)} of "
+            f"scope the carrier removed can explain; the original-vs-current line match "
+            f"is unreliable, so the per-item approvals could not be identified")
+    if r.og_line_diff_unreliable:
+        r.approved_added = []
+        r.approved_wins = []
+        r.approved_revised = []
 
     # Recompute the sublimit hypothesis with the original estimate so the divergent
     # approval-rate signal (a frozen secondary structure) can be measured.

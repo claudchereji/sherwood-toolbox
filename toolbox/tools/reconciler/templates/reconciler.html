@@ -50,6 +50,20 @@
     <p id="loadingText">Reading PDFs, reconciling, and marking up the carrier estimate...</p>
   </div>
 
+  <div id="errorPanel" class="panel" style="display:none;">
+    <p class="panel-label">Could not process the estimates</p>
+    <div class="rec-alert rec-alert-warn" id="errorText"></div>
+    <div class="rec-post-crm" id="errorPostWrap" style="display:none;">
+      <p class="muted-note">Post this error to the CRM job as a note.</p>
+      <button type="button" class="btn btn-secondary" id="postErrCrm" style="display:none;">Post error to CRM job</button>
+      <div class="rec-crm-row" id="postErrDealRow" style="display:none;">
+        <input type="text" id="postErrDealInput" placeholder="Paste CRM deal URL or id to post the error to" autocomplete="off">
+        <button type="button" class="btn btn-secondary" id="postErrDealBtn">Post error to CRM</button>
+      </div>
+      <p class="rec-crm-status" id="errPostStatus"></p>
+    </div>
+  </div>
+
   <div id="results" style="display:none;">
 
     <div class="panel rec-narrative" id="narrativePanel" style="display:none;"></div>
@@ -76,25 +90,43 @@
     <div class="panel rec-markup">
       <p class="panel-label">Marked-up carrier estimate</p>
       <p class="muted-note" id="markupNote">The difference is painted onto the carrier PDF. Open the summary page first.</p>
+      <div class="rec-legend-note" id="legendNote" style="display:none;"></div>
       <div class="rec-markup-stats">
         <div class="rec-stat"><span class="rec-stat-num" id="stA">0</span><span class="rec-stat-lbl" id="stALbl"></span><span class="rec-stat-sub" id="stASub"></span></div>
         <div class="rec-stat"><span class="rec-stat-num" id="stB">0</span><span class="rec-stat-lbl" id="stBLbl"></span><span class="rec-stat-sub" id="stBSub"></span></div>
         <div class="rec-stat"><span class="rec-stat-num" id="stC">0</span><span class="rec-stat-lbl" id="stCLbl"></span><span class="rec-stat-sub" id="stCSub"></span></div>
       </div>
       <button class="btn btn-primary" id="dlMarkup">Download marked-up carrier estimate (PDF)</button>
+      <div id="markupPreviewWrap" style="display:none; margin-top:16px;">
+        <p class="panel-label">Marked-up estimate preview</p>
+        <p class="muted-note">The finished document with scope flags, quantity gaps, and the summary page. Links are not clickable in this viewer; use the download button for the interactive copy.</p>
+        <iframe id="markupPreviewFrame" title="Marked-up carrier estimate preview" style="width:100%;height:680px;border:1px solid var(--line);border-radius:4px;background:var(--sage-50);display:block;"></iframe>
+      </div>
+      <div class="rec-post-crm">
+        <button type="button" class="btn btn-secondary" id="postCrm" style="display:none;">Post marked-up estimate to CRM job</button>
+        <div class="rec-crm-row" id="postDealRow" style="display:none;">
+          <input type="text" id="postDealInput" placeholder="Paste CRM deal URL or id to attach" autocomplete="off">
+          <button type="button" class="btn btn-secondary" id="postDealBtn">Post to CRM</button>
+        </div>
+        <p class="rec-crm-status" id="postStatus"></p>
+      </div>
       <p class="rec-log-note" id="logNote"></p>
     </div>
 
   </div>
 </div>
 
-<p class="note">Uploaded and fetched estimates are read locally and deleted once the markup is built. The line-by-line breakdown is written to a log; the marked-up PDF is served once and then removed. Figures are an aid to review, not a guarantee of coverage. Sherwood Estimates &copy; 2026.</p>
+<p class="note">Uploaded and fetched estimates are read locally and deleted once the markup is built. The line-by-line breakdown is written to a log; the marked-up PDF is kept briefly so it can be downloaded and posted back to the CRM job, then swept. Figures are an aid to review, not a guarantee of coverage. Sherwood Estimates &copy; 2026.</p>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  const REC_URLS = { run: "{{ url_for('reconciler.run') }}" };
-  const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}" };
+  const REC_URLS = { run: "{{ url_for('reconciler.run') }}", preview: "{{ url_for('reconciler.preview_file', name='__N__') }}" };
+  const CRM = { search: "{{ url_for('reconciler.crm_search') }}", files: "{{ url_for('reconciler.crm_files') }}", upload: "{{ url_for('reconciler.crm_upload') }}", errorNote: "{{ url_for('reconciler.crm_error_note') }}" };
+  let currentDeal = null;   // {id, title} once a CRM deal is searched or pasted
+  let markupName = null;    // filename of the latest markup, for posting to the CRM
+  let markupNote = null;    // server-built CRM note (HTML) with the bot-math summary
+  let lastErrorMessage = null;  // last run error text, for posting to the CRM job
   function $(id) { return document.getElementById(id); }
   function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -145,6 +177,7 @@
     });
   }
   async function crmLoadFiles(id, label) {
+    currentDeal = { id: String(id), title: label || '' };
     $('crmDeals').innerHTML = '';
     $('crmStatus').textContent = 'Loading the job’s documents...';
     try {
@@ -197,7 +230,7 @@
   }
   function renderEffectiveness(data) {
     const e = data.effectiveness, c = data.counts || {};
-    $('headLabel').textContent = 'Approval effectiveness';
+    $('headLabel').textContent = 'Approval ratio';
     $('headValue').textContent = Math.round((e.rate || 0) * 100) + '%';
     tile(1, 'Approved to date', signedMoney(e.approved), 'original to current');
     tile(2, 'Still unapproved', money(e.outstanding), 'asked, not yet approved');
@@ -206,9 +239,21 @@
     tile(5, 'Current carrier RCV', money(e.carrier_grand), '');
     tile(6, 'Contractor RCV', money(e.contractor_grand), '');
     $('totalsRow2').style.display = '';
-    $('markupNote').textContent = 'Approved items are checked in green on the carrier pages; unapproved scope is painted in blue by section. Open the summary page first.';
+    $('markupNote').textContent = 'Approved items are marked in green on the carrier pages with the dollar increase over the original in the left margin; unapproved scope is painted in blue by section. Open the summary page first.';
+    $('legendNote').style.display = '';
+    $('legendNote').innerHTML = [
+      '<div class="rec-legend-line rec-legend-title"><strong>Legend</strong></div>',
+      '<div class="rec-legend-row"><span class="rec-legend-swatch rec-legend-approved"></span><span>Approved to date. Carrier lines added or raised since the original estimate.</span></div>',
+      '<div class="rec-legend-row"><span class="rec-legend-swatch rec-legend-outstanding"></span><span>Still unapproved. Contractor-scope lines the carrier has not added.</span></div>',
+      '<div class="rec-legend-row"><span class="rec-legend-swatch rec-legend-short-high"></span><span>Shared-line shortfall over $500.</span></div>',
+      '<div class="rec-legend-row"><span class="rec-legend-swatch rec-legend-short-mid"></span><span>Shared-line shortfall from $150 to $500.</span></div>',
+      '<div class="rec-legend-row"><span class="rec-legend-swatch rec-legend-short-low"></span><span>Shared-line shortfall under $150.</span></div>',
+      '<div class="rec-legend-line">Approved-to-date is the grand-total carrier increase. Shared-line shortfalls are separate item-by-item gaps.</div>',
+      '<div class="rec-legend-line">Effectiveness is measured from grand totals to the cent; the per-item lists use line matching and may not sum to those totals exactly.</div>',
+      '<div class="rec-legend-line">An aid to review, not a guarantee of coverage. Figures are read from the PDFs as printed. Sherwood Estimates (c) 2026.</div>'
+    ].join('');
     stat('A', count(c.missing), 'unapproved items', money(c.missing_dollars) + ', ' + count(c.missing_painted) + ' painted in place');
-    stat('B', count(e.won_tagged), 'approved items tagged', 'checked in green');
+    stat('B', count(e.won_tagged), 'approved items tagged', 'increase shown in green');
     stat('C', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' highlighted' : 'none under-measured');
   }
   function renderRecoverable(data) {
@@ -220,6 +265,8 @@
     tile(3, 'Total RCV gap', money(data.gap), 'contractor minus carrier');
     $('totalsRow2').style.display = 'none';
     $('markupNote').textContent = 'Missing scope is painted in salmon by section; under-measured lines are highlighted in place. Open the summary page first.';
+    $('legendNote').style.display = 'none';
+    $('legendNote').innerHTML = '';
     stat('A', count(c.missing), 'missing line items', c.missing_dollars ? money(c.missing_dollars) + ' in scope, ' + count(c.missing_painted) + ' painted' : '');
     stat('B', count(c.flagged), 'quantity gaps flagged', c.flagged ? count(c.located) + ' of ' + count(c.flagged) + ' highlighted' : 'none under-measured');
     stat('C', count(c.added_pages), 'summary pages added', '');
@@ -235,6 +282,98 @@
         finally { btn.disabled = false; btn.textContent = label; }
       } else { window.location.href = url; }
     };
+  }
+
+  // === post the markup back to the CRM job ===
+  // Show the direct button when a deal is already known (searched/pasted), else
+  // the paste-a-deal-URL row. Called after each successful run.
+  function preparePostUi(url) {
+    markupName = decodeURIComponent(url.split('/').pop());
+    const b = $('postCrm');
+    b.disabled = false; b.textContent = 'Post marked-up estimate to CRM job';
+    $('postStatus').textContent = ''; $('postStatus').classList.remove('rec-ok');
+    $('postDealInput').value = '';
+    const known = currentDeal && currentDeal.id;
+    b.style.display = known ? '' : 'none';
+    $('postDealRow').style.display = known ? 'none' : '';
+  }
+
+  async function postToCrm(dealId, name, btn) {
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+    $('postStatus').textContent = ''; $('postStatus').classList.remove('rec-ok');
+    try {
+      const fd = new FormData();
+      fd.append('deal_id', String(dealId));
+      fd.append('name', name);
+      if (markupNote) fd.append('note', markupNote);
+      const d = await (await fetch(CRM.upload, { method: 'POST', body: fd })).json();
+      if (d.ok) {
+        const pb = $('postCrm');
+        pb.style.display = ''; pb.disabled = true; pb.textContent = 'Attached to CRM job ✓';
+        $('postDealRow').style.display = 'none';
+        // markupNote is HTML built by the server (bot-math line bold + underlined).
+        $('postStatus').innerHTML = markupNote ||
+          "Reconciliation bot finished it's terrible purpose:<br><br>the marked up Carrier Estimate is Attached to the file.";
+        $('postStatus').classList.add('rec-ok');
+      } else {
+        $('postStatus').textContent = d.error || 'Could not post to the CRM.';
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      }
+    } catch (e) {
+      $('postStatus').textContent = 'Post failed: ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
+  // === run errors + posting the error to the CRM job ===
+  // A "file not readable" style error (crm_postable) offers a one-click note on the
+  // CRM job: the exact error text, signed server-side. The button shows when a deal
+  // is already known; otherwise a paste-a-deal row, mirroring the markup post UI.
+  function showError(data) {
+    const msg = data.error || 'Something went wrong.';
+    lastErrorMessage = msg;
+    $('errorText').textContent = msg;
+    const wrap = $('errorPostWrap');
+    if (data.crm_postable) {
+      wrap.style.display = '';
+      $('errPostStatus').textContent = ''; $('errPostStatus').classList.remove('rec-ok');
+      const known = currentDeal && currentDeal.id;
+      const b = $('postErrCrm');
+      b.style.display = known ? '' : 'none';
+      b.disabled = false; b.textContent = 'Post error to CRM job';
+      $('postErrDealRow').style.display = known ? 'none' : '';
+      $('postErrDealInput').value = '';
+    } else {
+      wrap.style.display = 'none';
+    }
+    $('errorPanel').style.display = 'block';
+  }
+
+  async function postErrorToCrm(dealId, message, btn) {
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+    $('errPostStatus').textContent = ''; $('errPostStatus').classList.remove('rec-ok');
+    try {
+      const fd = new FormData();
+      fd.append('deal_id', String(dealId));
+      fd.append('message', message);
+      const d = await (await fetch(CRM.errorNote, { method: 'POST', body: fd })).json();
+      if (d.ok) {
+        const b = $('postErrCrm');
+        b.style.display = ''; b.disabled = true; b.textContent = 'Error posted to CRM job ✓';
+        $('postErrDealRow').style.display = 'none';
+        // d.posted is the server-built note (line breaks as <br>); render it.
+        $('errPostStatus').innerHTML = d.posted || 'Posted to the CRM job.';
+        $('errPostStatus').classList.add('rec-ok');
+      } else {
+        $('errPostStatus').textContent = d.error || 'Could not post to the CRM.';
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      }
+    } catch (e) {
+      $('errPostStatus').textContent = 'Post failed: ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
   }
 
   // For a slot, append either the uploaded file or the chosen CRM document.
@@ -253,6 +392,30 @@
   $('crmFind').addEventListener('click', crmFind);
   $('crmQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); crmFind(); } });
 
+  $('postCrm').addEventListener('click', () => {
+    if (!currentDeal || !currentDeal.id || !markupName) return;
+    postToCrm(currentDeal.id, markupName, $('postCrm'));
+  });
+  $('postDealBtn').addEventListener('click', () => {
+    if (!markupName) { $('postStatus').textContent = 'Run a reconciliation first.'; return; }
+    const id = extractDealId($('postDealInput').value || '');
+    if (!id) { $('postStatus').textContent = 'Paste a CRM deal URL or a numeric deal id.'; return; }
+    postToCrm(id, markupName, $('postDealBtn'));
+  });
+  $('postDealInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('postDealBtn').click(); } });
+
+  $('postErrCrm').addEventListener('click', () => {
+    if (!currentDeal || !currentDeal.id || !lastErrorMessage) return;
+    postErrorToCrm(currentDeal.id, lastErrorMessage, $('postErrCrm'));
+  });
+  $('postErrDealBtn').addEventListener('click', () => {
+    if (!lastErrorMessage) { $('errPostStatus').textContent = 'Run a reconciliation first.'; return; }
+    const id = extractDealId($('postErrDealInput').value || '');
+    if (!id) { $('errPostStatus').textContent = 'Paste a CRM deal URL or a numeric deal id.'; return; }
+    postErrorToCrm(id, lastErrorMessage, $('postErrDealBtn'));
+  });
+  $('postErrDealInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('postErrDealBtn').click(); } });
+
   $('recForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData();
@@ -262,17 +425,28 @@
     if (!hasCarrier || !hasContractor) { alert('Provide a current carrier estimate and a contractor supplement. Upload a file or pick a CRM document for each.'); return; }
 
     $('results').style.display = 'none';
+    $('errorPanel').style.display = 'none';
     $('loading').style.display = 'block';
     $('runBtn').disabled = true;
     try {
       const data = await (await fetch(REC_URLS.run, { method: 'POST', body: fd })).json();
-      if (data.error) { alert(data.error); return; }
+      if (data.error) { showError(data); return; }
       renderNarrative(data);
       if (data.mode === 'effectiveness' && data.effectiveness) renderEffectiveness(data);
       else renderRecoverable(data);
       $('logNote').textContent = data.log_path ? ('Full line-by-line breakdown logged to ' + data.log_path) : '';
       buildAlerts(data);
       wireDownload($('dlMarkup'), data.markup_download);
+      // Inline preview of the marked-up PDF
+      var markupFileName = decodeURIComponent(data.markup_download.split('/').pop());
+      var previewUrl = REC_URLS.preview.replace('__N__', encodeURIComponent(markupFileName));
+      console.log('[rec] preview wiring:', {markupFileName: markupFileName, previewUrl: previewUrl, downloadUrl: data.markup_download});
+      var previewFrame = $('markupPreviewFrame');
+      var previewWrap = $('markupPreviewWrap');
+      if (previewFrame) previewFrame.src = previewUrl;
+      if (previewWrap) previewWrap.style.display = 'block';
+      markupNote = data.crm_note || null;
+      preparePostUi(data.markup_download);
       $('results').style.display = 'block';
     } catch (err) { alert('Error: ' + err.message); }
     finally { $('loading').style.display = 'none'; $('runBtn').disabled = false; }

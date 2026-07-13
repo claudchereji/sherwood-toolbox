@@ -102,13 +102,20 @@ def _similar(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-def match_line_items(carrier_items, contractor_items, threshold: float = 0.86):
+def match_line_items(carrier_items, contractor_items, threshold: float = 0.86,
+                     price_guard: bool = True):
     """Match contractor items to carrier items by base key, then fuzzy.
 
     Returns (matched, missing, carrier_only):
       matched      -> list of (contractor_item, carrier_item)
       missing      -> contractor items with no carrier counterpart
       carrier_only -> carrier items with no contractor counterpart
+
+    price_guard blocks a fuzzy (non-exact-base) match across a large unit-price gap,
+    so a cross-software size variant ('...aluminum sheet - large' vs '...aluminum
+    sheet') is not merged into a different-priced line. Turn it off when matching an
+    estimate to its own revision, where the same carrier can correct a price on the
+    same line by more than the gap and that is a real revision, not a new product.
     """
     # Drop "SEE REVISION" originals from both sides: a superseded contractor line
     # would otherwise consume the carrier partner its corrected replacement needs.
@@ -124,19 +131,40 @@ def match_line_items(carrier_items, contractor_items, threshold: float = 0.86):
     for it in contractor_items:
         cand = [c for c in by_base.get(it.base, []) if id(c) not in used]
         if cand:
-            partner = cand[0]
+            # Several lines can share a base key (three tear-off runs at different
+            # quantities); pair the closest in quantity so a line matches its true
+            # counterpart, not merely the first listed. Pairing 1.43 SQ to 92.44 SQ
+            # would read as a huge false increase.
+            partner = min(cand, key=lambda c: abs(c.quantity - it.quantity))
             used.add(id(partner))
             matched.append((it, partner))
             continue
-        # fuzzy fallback across unused carrier items
-        best, best_r = None, 0.0
+        # fuzzy fallback: score every unused carrier item, boosting a base that is
+        # the other plus a trailing qualifier ('...shingles' vs '...shingles -
+        # laminated', which the parser can produce when a description wraps). Among
+        # plausible matches take the closest quantity.
+        scored = []
         for c in carrier_items:
             if id(c) in used:
                 continue
-            r = _similar(it.base, c.base)
-            if r > best_r:
-                best, best_r = c, r
-        if best is not None and best_r >= threshold:
+            # A size variant ('...aluminum sheet - large' vs '...aluminum sheet')
+            # reads as a near-identical description but is a different product at a
+            # different unit price. A fuzzy (non-exact-base) match across a large
+            # price gap is one of those, not the same line reworded, so skip it and
+            # let the variant stand as its own missing/added item.
+            if (price_guard and it.unit_price > 0 and c.unit_price > 0
+                    and min(it.unit_price, c.unit_price)
+                    / max(it.unit_price, c.unit_price) < 0.80):
+                continue
+            s = _similar(it.base, c.base)
+            a, b = it.base, c.base
+            if len(a) >= 12 and len(b) >= 12 and (a in b or b in a):
+                s = max(s, 0.90 + 0.09 * min(len(a), len(b)) / max(len(a), len(b)))
+            if s >= threshold:
+                scored.append((round(s, 2), abs(c.quantity - it.quantity), c))
+        if scored:
+            scored.sort(key=lambda t: (-t[0], t[1]))
+            best = scored[0][2]
             used.add(id(best))
             matched.append((it, best))
         else:

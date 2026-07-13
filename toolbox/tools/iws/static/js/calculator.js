@@ -43,6 +43,7 @@
         calculateBtn: document.getElementById('calculateBtn'),
         clearBtn: document.getElementById('clearBtn'),
         roofPlanBtn: document.getElementById('roofPlanBtn'),
+        savePdfBtn: document.getElementById('savePdfBtn'),
         closeRoofPlan: document.getElementById('closeRoofPlan'),
         roofPlanPanel: document.getElementById('roofPlanPanel'),
         resultsSection: document.getElementById('resultsSection'),
@@ -496,6 +497,67 @@
         document.body.removeChild(link);
     }
 
+    // ─── PDF Export ──────────────────────────────────────────────────────
+    function handleSavePdf() {
+        var inputs = getInputs();
+        var geom = calculateGeometry(inputs);
+        var actual = calculateActualSF(inputs, geom);
+        var fullRoll = calculateFullRoll(inputs, geom);
+
+        var payload = {
+            projectName: inputs.projectName,
+            projectAddress: inputs.projectAddress,
+            roofSizeSq: inputs.roofSizeSq,
+            roofPitch: inputs.roofPitch,
+            eaveLength: inputs.eaveLength,
+            valleyLength: inputs.valleyLength,
+            calcMode: inputs.calcMode,
+            insideWall: inputs.insideWall,
+            soffitDepth: inputs.soffitDepth,
+            coverage: geom.coverage,
+            wallThickness: geom.wallThickness,
+            actualTotal: actual.total,
+            fullRollTotal: fullRoll.total,
+            feltReduction: actual.feltReduction,
+            feltSq: actual.feltSq
+        };
+
+        els.savePdfBtn.disabled = true;
+        els.savePdfBtn.textContent = 'Generating...';
+        console.log('[iws] pdf export:', {project: inputs.projectName, actual: actual.total, fullRoll: fullRoll.total});
+
+        fetch('/iws/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(function(r) {
+            return r.json();
+        }).then(function(data) {
+            if (data.error) { throw new Error(data.error); }
+            if (data.ok && data.filename) {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.save_file) {
+                    els.savePdfBtn.textContent = 'Saving...';
+                    return window.pywebview.api.save_file(data.filename).then(function(res) {
+                        if (!res.ok && res.error !== 'Save cancelled.') {
+                            throw new Error(res.error || 'Could not save file.');
+                        }
+                        els.savePdfBtn.textContent = 'Saved!';
+                        setTimeout(function() { els.savePdfBtn.textContent = 'Save as PDF'; }, 2000);
+                    });
+                } else {
+                    // Browser fallback: direct download link
+                    window.location.href = data.download;
+                    els.savePdfBtn.textContent = 'Save as PDF';
+                }
+            }
+        }).catch(function(err) {
+            alert('PDF export failed: ' + err.message);
+        }).finally(function() {
+            els.savePdfBtn.disabled = false;
+            els.savePdfBtn.textContent = 'Save as PDF';
+        });
+    }
+
     // ─── Event Handlers ──────────────────────────────────────────────────────
     function handleCalculate() {
         const inputs = getInputs();
@@ -535,6 +597,7 @@
 
         // Enable IWS Diagram button after successful calculation
         els.roofPlanBtn.disabled = false;
+        els.savePdfBtn.disabled = false;
 
         // Persist calculation to localStorage history
         addToHistory(inputs, actual, fullRoll);
@@ -563,6 +626,7 @@
         els.roofPlanPanel.classList.add('hidden');
         els.roofPlanBtn.setAttribute('aria-expanded', 'false');
         els.roofPlanBtn.disabled = true;
+        els.savePdfBtn.disabled = true;
 
         els.roofSize.focus();
     }
@@ -651,6 +715,7 @@
         els.roofPlanBtn.addEventListener('click', toggleRoofPlan);
         els.closeRoofPlan.addEventListener('click', closeRoofPlanPanel);
         els.saveDiagramBtn.addEventListener('click', handleSaveDiagram);
+        els.savePdfBtn.addEventListener('click', handleSavePdf);
 
         // Copy buttons
         document.querySelectorAll('.btn-copy').forEach(btn => {

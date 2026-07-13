@@ -35,6 +35,15 @@ CRM_BASE_URL = _os.environ.get("TOOLBOX_CRM_BASE_URL", CRM_BASE_URL)
 API = CRM_BASE_URL.rstrip("/") + "/api/2.0"
 FILEHANDLER = CRM_BASE_URL.rstrip("/") + "/Products/Files/HttpHandlers/filehandler.ashx"
 
+# Fallback activity-feed note (plain, no bot-math summary). The primary note is
+# built per-run in routes._crm_note and passed in; this is only used if none is.
+ATTACH_NOTE = ("Reconciliation bot finished it's terrible purpose:\n\n"
+               "the marked up Carrier Estimate is Attached to the file.")
+# /crm/history requires a valid categoryId. This is the "Note" category id on
+# office.publicadjustermidwest.com; looked up by title at runtime, this is the
+# fallback if the lookup fails.
+NOTE_CATEGORY_FALLBACK = 38
+
 _SESSION = None
 _SESSION_TS = 0.0
 _SESSION_TTL = 600          # seconds before a fresh login
@@ -79,6 +88,30 @@ def _api_get(path, params=None, _retry=True):
             return _api_get(path, params, _retry=False)
         raise CrmError("CRM session expired; could not re-authenticate.")
     if r.status_code != 200:
+        raise CrmError(f"CRM returned HTTP {r.status_code}.")
+    try:
+        d = r.json()
+    except Exception:
+        raise CrmError("CRM returned an unexpected (non-JSON) response.")
+    return d.get("response", d) if isinstance(d, dict) else d
+
+
+def _api_post(path, data=None, files=None, json=None, _retry=True):
+    """POST to the CRM JSON API through the shared session, mirroring _api_get's
+    401/403 re-login-and-retry. Uploads return 201, so both 200 and 201 pass.
+    `json` sends a JSON body (the history endpoint wants one). Returns the parsed
+    `response` payload."""
+    s = _session()
+    try:
+        r = s.post(API + path, data=data, files=files, json=json, timeout=90)
+    except Exception as e:
+        raise CrmError(f"Could not reach the CRM: {e}")
+    if r.status_code in (401, 403) or "auth" in r.url.lower():
+        if _retry:
+            _session(force=True)
+            return _api_post(path, data=data, files=files, json=json, _retry=False)
+        raise CrmError("CRM session expired; could not re-authenticate.")
+    if r.status_code not in (200, 201):
         raise CrmError(f"CRM returned HTTP {r.status_code}.")
     try:
         d = r.json()
@@ -257,3 +290,71 @@ def download_file(file_id, dest):
     with open(dest, "wb") as fh:
         fh.write(r.content)
     return dest
+
+
+_NOTE_CATEGORY_ID = None
+
+
+def _note_category_id():
+    """The CRM's 'Note' history category id, looked up once and cached, falling
+    back to NOTE_CATEGORY_FALLBACK. /crm/history rejects events with no valid
+    categoryId, so the note needs a real one."""
+    global _NOTE_CATEGORY_ID
+    if _NOTE_CATEGORY_ID is not None:
+        return _NOTE_CATEGORY_ID
+    try:
+        for c in _api_get("/crm/history/category") or []:
+            if (c.get("title") or "").strip().lower() == "note":
+                _NOTE_CATEGORY_ID = c.get("id")
+                break
+    except CrmError:
+        pass
+    if _NOTE_CATEGORY_ID is None:
+        _NOTE_CATEGORY_ID = NOTE_CATEGORY_FALLBACK
+    return _NOTE_CATEGORY_ID
+
+
+def post_note(deal_id, content):
+    """Post a plain note (no file) to a CRM deal's activity feed as one 'Note'
+    history event. This is upload_file without the file: a `/crm/history` event
+    carrying only text, used to log a bot message on the job when there is nothing
+    to attach (for example a reconciliation error). Returns {event_id}."""
+    did = int(deal_id)
+    resp = _api_post("/crm/history", json={
+        "entityType": "opportunity", "entityId": did, "contactId": 0,
+        "categoryId": _note_category_id(), "content": content or ""})
+    return {"event_id": (resp.get("id") if isinstance(resp, dict) else None)}
+
+
+def upload_file(deal_id, path, title=None, note=ATTACH_NOTE):
+    """Attach a local file to a CRM deal (opportunity) and post a note in one
+    activity event, the reverse of download_file. `/files/upload` only stores the
+    bytes and returns a file id; a single `/crm/history` event then carries the
+    note text and attaches that file (fileId as a JSON array), so the deal shows
+    one 'Note' entry with the file on it rather than a separate 'Files are
+    uploaded' event plus a note. Returns {file_id, title}."""
+    did = int(deal_id)
+    name = title or _os.path.basename(path)
+    try:
+        with open(path, "rb") as fh:
+            blob = fh.read()          # read once so a re-login retry can re-send
+    except Exception as e:
+        raise CrmError(f"Could not read the file to upload: {e}")
+
+    # 1. Store the bytes. The multipart field name is arbitrary (OnlyOffice reads
+    #    every posted file); the returned FileWrapper's `id` is the stored file.
+    resp = _api_post(f"/crm/opportunity/{did}/files/upload",
+                     data={"storeOriginalFileFlag": "false"},
+                     files={"file": (name, blob, "application/pdf")})
+    file_id = resp.get("id") if isinstance(resp, dict) else None
+    if not file_id:
+        raise CrmError("CRM accepted the upload but returned no file id.")
+
+    # 2. One activity event that both records the note and attaches the stored
+    #    file (fileId array). This history event is what links the file to the
+    #    deal, so no separate /files attach (which would log its own event).
+    _api_post("/crm/history", json={
+        "entityType": "opportunity", "entityId": did, "contactId": 0,
+        "categoryId": _note_category_id(), "content": note or "",
+        "fileId": [file_id]})
+    return {"file_id": file_id, "title": name}
