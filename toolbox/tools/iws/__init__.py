@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, render_template, request, send_file, url_f
 
 from ...config import Config
 from ...core import crm_search
+from . import pdf_extractor
 
 bp = Blueprint(
     "iws",
@@ -70,6 +71,32 @@ def crm_files_route():
     except crm_search.CrmError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
+
+@bp.route("/extract-measurements", methods=["POST"])
+def extract_measurements():
+    file_id = (request.get_json(silent=True) or {}).get("file_id")
+    if not file_id:
+        return jsonify({"ok": False, "error": "Missing file_id"}), 400
+    
+    try:
+        temp_dir = tempfile.mkdtemp()
+        pdf_path = os.path.join(temp_dir, "measurement.pdf")
+        
+        try:
+            crm_search.download_file(file_id, pdf_path)
+            measurements = pdf_extractor.extract_measurements_from_pdf(pdf_path)
+            return jsonify({"ok": True, **measurements})
+        finally:
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+    except pdf_extractor.ExtractionError as e:
+        return jsonify({"ok": False, "error": f"Extraction failed: {str(e)}"}), 400
+    except crm_search.CrmError as e:
+        return jsonify({"ok": False, "error": f"Failed to download file: {str(e)}"}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error: {str(e)}"}), 500
 
 
 @bp.route("/pdf", methods=["POST"])
