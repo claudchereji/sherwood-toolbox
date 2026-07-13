@@ -160,6 +160,7 @@
   <script>
     const IWS = {
       crmSearch: "{{ url_for('iws.crm_search_route') }}",
+      crmFetch: "{{ url_for('iws.crm_fetch_route') }}",
       crmFiles: "{{ url_for('iws.crm_files_route') }}",
       extractMeasurements: "{{ url_for('iws.extract_measurements') }}"
     };
@@ -212,6 +213,23 @@
 
     function crmLoadInfo(dealId) {
       currentDealId = dealId;
+      fetch(IWS.crmFetch, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: dealId })
+      })
+        .then(r => r.json())
+        .then(d => {
+          if (d.ok && d.info) {
+            const info = d.info;
+            if (info.customer_name) document.getElementById("projectName").value = info.customer_name;
+            const street = info.street || info.job_location || "";
+            const cityStateZip = info.city_state_zip || "";
+            const fullAddress = cityStateZip ? street + ", " + cityStateZip : street;
+            if (fullAddress) document.getElementById("projectAddress").value = fullAddress;
+          }
+        })
+        .catch(e => console.warn("CRM fetch error:", e.message));
       crmLoadFiles(dealId);
     }
 

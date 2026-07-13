@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, render_template, request, send_file, url_f
 
 from ...config import Config
 from ...core import crm_search
+from ...core import crm as crm_core
 from . import pdf_extractor
 
 bp = Blueprint(
@@ -70,6 +71,26 @@ def crm_files_route():
         return jsonify({"ok": True, "files": files, "deal_id": deal_id})
     except crm_search.CrmError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@bp.route("/crm-fetch", methods=["POST"])
+def crm_fetch_route():
+    deal_id = str((request.get_json(silent=True) or {}).get("deal_id", "")).strip()
+    if not deal_id:
+        return jsonify({"ok": False, "error": "Missing deal_id"}), 400
+    
+    base_url = getattr(Config, "CRM_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return jsonify({"ok": False, "error": "CRM not configured"}), 400
+    
+    crm_url = f"{base_url}/Products/CRM/Deals.aspx?id={deal_id}"
+    try:
+        info = crm_core.fetch_job_info(crm_url)
+        return jsonify({"ok": True, "info": info})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"CRM fetch error: {str(e)}"}), 500
 
 
 @bp.route("/extract-measurements", methods=["POST"])
