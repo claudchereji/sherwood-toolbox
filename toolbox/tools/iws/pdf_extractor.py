@@ -180,14 +180,18 @@ def _calculate_predominant_soffit_depth(depths):
         return None
     
     if len(numeric_depths) == 1:
-        return int(numeric_depths[0])
+        return _as_clean_number(numeric_depths[0])
     
     counts = Counter(numeric_depths)
     max_freq = max(counts.values())
     modes = [v for v, c in counts.items() if c == max_freq]
     
     if len(modes) == 1:
-        return int(modes[0])
+        return _as_clean_number(modes[0])
     
-    avg = sum(modes) / len(modes)
-    return int(round(avg))
+    avg = sum(numeric_depths) / len(numeric_depths)
+    return _as_clean_number(round(avg, 1))
+
+
+def _as_clean_number(value):
+    return int(value) if float(value).is_integer() else float(value)
