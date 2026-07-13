@@ -424,18 +424,10 @@
     }
 
     // ─── Diagram JPEG Export ───────────────────────────────────────────────
-    function handleSaveDiagram() {
+    function buildDiagramCanvas() {
         const img = els.diagramImg;
-        if (!img.complete || img.naturalWidth === 0) {
-            alert('Diagram image is not ready yet. Please try again.');
-            return;
-        }
-
-        // Check if labels have been populated
-        if (!els.labelCoverage.textContent) {
-            alert('Please run a calculation first so the diagram has values to display.');
-            return;
-        }
+        if (!img || !img.complete || img.naturalWidth === 0) return null;
+        if (!els.labelCoverage.textContent) return null;
 
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -482,7 +474,27 @@
             ctx.shadowBlur = 0;
         });
 
-        // Export as JPEG
+        return canvas;
+    }
+
+    function handleSaveDiagram() {
+        const img = els.diagramImg;
+        if (!img.complete || img.naturalWidth === 0) {
+            alert('Diagram image is not ready yet. Please try again.');
+            return;
+        }
+
+        // Check if labels have been populated
+        if (!els.labelCoverage.textContent) {
+            alert('Please run a calculation first so the diagram has values to display.');
+            return;
+        }
+
+        const canvas = buildDiagramCanvas();
+        if (!canvas) {
+            alert('Diagram is not ready yet. Please try again.');
+            return;
+        }
         const inputs = getInputs();
         const rawName = (inputs.projectName || '').trim();
         const safeName = rawName.replace(/\s+/g, '_').replace(/[\\/:*?"<>|]/g, '');
@@ -498,11 +510,58 @@
     }
 
     // ─── PDF Export ──────────────────────────────────────────────────────
+    function askCalcChoice() {
+        // Small modal asking which calculation to print on the PDF.
+        return new Promise(function(resolve) {
+            var overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);' +
+                'display:flex;align-items:center;justify-content:center;z-index:9999;';
+            var box = document.createElement('div');
+            box.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:360px;' +
+                'text-align:center;box-shadow:0 8px 30px rgba(0,0,0,0.3);font-family:inherit;';
+            box.innerHTML = '<h3 style="margin:0 0 8px;">Which calculation should the PDF use?</h3>' +
+                '<p style="margin:0 0 16px;color:#555;font-size:0.9em;">Pick the coverage number to print on the report.</p>';
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;';
+            function mkBtn(label, value) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'btn btn-primary';
+                b.textContent = label;
+                b.style.cssText = 'padding:10px 16px;cursor:pointer;';
+                b.onclick = function() { document.body.removeChild(overlay); resolve(value); };
+                return b;
+            }
+            row.appendChild(mkBtn('Actual SF', 'actual'));
+            row.appendChild(mkBtn('Full Roll SF', 'fullRoll'));
+            var cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'btn btn-secondary';
+            cancel.textContent = 'Cancel';
+            cancel.style.cssText = 'padding:10px 16px;cursor:pointer;';
+            cancel.onclick = function() { document.body.removeChild(overlay); resolve(null); };
+            row.appendChild(cancel);
+            box.appendChild(row);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+        });
+    }
+
     function handleSavePdf() {
+        askCalcChoice().then(function(calcChoice) {
+            if (!calcChoice) return;
+            exportPdf(calcChoice);
+        });
+    }
+
+    function exportPdf(calcChoice) {
         var inputs = getInputs();
         var geom = calculateGeometry(inputs);
         var actual = calculateActualSF(inputs, geom);
         var fullRoll = calculateFullRoll(inputs, geom);
+
+        var diagramCanvas = buildDiagramCanvas();
+        var diagramImage = diagramCanvas ? diagramCanvas.toDataURL('image/jpeg', 0.9) : null;
 
         var payload = {
             projectName: inputs.projectName,
@@ -519,7 +578,9 @@
             actualTotal: actual.total,
             fullRollTotal: fullRoll.total,
             feltReduction: actual.feltReduction,
-            feltSq: actual.feltSq
+            feltSq: actual.feltSq,
+            calcChoice: calcChoice,
+            diagramImage: diagramImage
         };
 
         els.savePdfBtn.disabled = true;
