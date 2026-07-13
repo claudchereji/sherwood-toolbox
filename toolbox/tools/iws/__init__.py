@@ -58,19 +58,23 @@ def crm_search_route():
         deals = crm_search.search_deals(query)
         return jsonify({"ok": True, "deals": deals})
     except crm_search.CrmError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"CRM search failed: {e}"})
 
 
 @bp.route("/crm-files", methods=["POST"])
 def crm_files_route():
-    deal_id = (request.get_json(silent=True) or {}).get("deal_id")
-    if not deal_id:
+    deal_id = str((request.get_json(silent=True) or {}).get("deal_id", "")).strip()
+    if not deal_id.isdigit():
         return jsonify({"ok": False, "error": "Missing deal_id"}), 400
     try:
-        files = crm_search.deal_files(deal_id)
-        return jsonify({"ok": True, "files": files, "deal_id": deal_id})
+        result = crm_search.deal_files(deal_id)
+        return jsonify({"ok": True, **result, "deal_id": deal_id})
     except crm_search.CrmError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not list the deal's files: {e}"})
 
 
 @bp.route("/crm-fetch", methods=["POST"])
@@ -78,19 +82,9 @@ def crm_fetch_route():
     deal_id = str((request.get_json(silent=True) or {}).get("deal_id", "")).strip()
     if not deal_id:
         return jsonify({"ok": False, "error": "Missing deal_id"}), 400
-    
-    base_url = getattr(Config, "CRM_BASE_URL", "").rstrip("/")
-    if not base_url:
-        return jsonify({"ok": False, "error": "CRM not configured"}), 400
-    
+    base_url = crm_search.CRM_BASE_URL.rstrip("/")
     crm_url = f"{base_url}/Products/CRM/Deals.aspx?id={deal_id}"
-    try:
-        info = crm_core.fetch_job_info(crm_url)
-        return jsonify({"ok": True, "info": info})
-    except ValueError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"CRM fetch error: {str(e)}"}), 500
+    return jsonify(crm_core.fetch_job_info(crm_url))
 
 
 @bp.route("/extract-measurements", methods=["POST"])
@@ -118,6 +112,32 @@ def extract_measurements():
         return jsonify({"ok": False, "error": f"Failed to download file: {str(e)}"}), 400
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error: {str(e)}"}), 500
+
+
+@bp.route("/extract-upload", methods=["POST"])
+def extract_upload():
+    """Extract measurements from a PDF uploaded from the user's computer."""
+    f = request.files.get("pdf")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No PDF file uploaded"}), 400
+    if not f.filename.lower().endswith(".pdf"):
+        return jsonify({"ok": False, "error": "Please upload a PDF file"}), 400
+
+    temp_dir = tempfile.mkdtemp()
+    pdf_path = os.path.join(temp_dir, "upload.pdf")
+    try:
+        f.save(pdf_path)
+        measurements = pdf_extractor.extract_measurements_from_pdf(pdf_path)
+        return jsonify({"ok": True, **measurements})
+    except pdf_extractor.ExtractionError as e:
+        return jsonify({"ok": False, "error": f"Extraction failed: {str(e)}"}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error: {str(e)}"}), 500
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass
 
 
 @bp.route("/pdf", methods=["POST"])

@@ -1,7 +1,7 @@
 import re
 from collections import Counter
 try:
-    import PyPDF2
+    import fitz
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
@@ -13,7 +13,7 @@ class ExtractionError(Exception):
 
 def extract_measurements_from_pdf(pdf_path):
     if not PDF_AVAILABLE:
-        raise ExtractionError("PyPDF2 is not installed. Cannot extract PDF text.")
+        raise ExtractionError("PyMuPDF (fitz) is not installed. Cannot extract PDF text.")
     
     text = _extract_text_from_pdf(pdf_path)
     if not text:
@@ -42,12 +42,11 @@ def extract_measurements_from_pdf(pdf_path):
 
 def _extract_text_from_pdf(pdf_path):
     try:
-        with open(pdf_path, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
-            text_parts = []
-            for page in reader.pages:
-                text_parts.append(page.extract_text())
-            return '\n'.join(text_parts)
+        doc = fitz.open(pdf_path)
+        try:
+            return '\n'.join(page.get_text() for page in doc)
+        finally:
+            doc.close()
     except Exception as e:
         raise ExtractionError(f"Failed to read PDF: {e}")
 
@@ -71,10 +70,11 @@ def _extract_pitch(text):
     patterns = [
         r'(?:pitch|slope)\s*:?\s*(\d+)\s*/\s*12',
         r'(\d+)\s*/\s*12\s*(?:pitch|slope)',
+        r'roof\s+pitch\*?.{0,80}?(\d+)\s*/\s*12',
     ]
     
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
         if match:
             return int(match.group(1))
     
@@ -131,6 +131,19 @@ def _extract_valley_length(text):
 def _extract_soffit_depths(text):
     depths = []
     
+    # HOVER "Soffit Breakdown" table: rows come out of fitz as
+    # 'eave' on one line followed by the depth like '33"' on the next.
+    breakdown = re.search(r'soffit\s+breakdown(.*?)(?:\n(?-i:[A-Z]{2,})|\Z)', text,
+                          re.IGNORECASE | re.DOTALL)
+    section = breakdown.group(1) if breakdown else text
+    for match in re.finditer(r'\beaves?\b\s*\n\s*(\d+(?:\.\d+)?)\s*"', section,
+                             re.IGNORECASE):
+        depth = float(match.group(1))
+        if 5 <= depth <= 100:
+            depths.append(int(depth))
+    if depths:
+        return depths
+    
     patterns = [
         r'(?:eave|depth)\s+(\d+)\s*:.*?(\d+)\s*"',
         r'eave\s+depth\s*:?\s*(\d+)\s*"',
@@ -140,7 +153,7 @@ def _extract_soffit_depths(text):
     for pattern in patterns:
         matches = re.finditer(pattern, text, re.IGNORECASE)
         for match in matches:
-            depth_str = match.group(-1) if match.lastindex > 1 else match.group(1)
+            depth_str = match.group(match.lastindex) if match.lastindex > 1 else match.group(1)
             try:
                 depth = int(depth_str)
                 if 5 <= depth <= 100:
@@ -148,10 +161,7 @@ def _extract_soffit_depths(text):
             except ValueError:
                 continue
     
-    if depths:
-        return sorted(list(set(depths)))
-    
-    return None
+    return depths or None
 
 
 def _extract_numeric_inches(depth_str):

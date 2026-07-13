@@ -28,8 +28,15 @@
         </select>
       </div>
       <button type="button" id="extractMeasurementsBtn" class="btn btn-secondary" disabled>Extract Measurements from PDF</button>
-      <p id="extractStatus" class="extract-status"></p>
     </div>
+    <div class="crm-files-section">
+      <div class="form-field">
+        <label for="uploadPdf">Or upload a HOVER PDF from your computer</label>
+        <input type="file" id="uploadPdf" accept=".pdf,application/pdf">
+      </div>
+      <button type="button" id="extractUploadBtn" class="btn btn-secondary" disabled>Extract Measurements from Uploaded PDF</button>
+    </div>
+    <p id="extractStatus" class="extract-status"></p>
   </div>
   
   <div class="form-grid">
@@ -162,7 +169,8 @@
       crmSearch: "{{ url_for('iws.crm_search_route') }}",
       crmFetch: "{{ url_for('iws.crm_fetch_route') }}",
       crmFiles: "{{ url_for('iws.crm_files_route') }}",
-      extractMeasurements: "{{ url_for('iws.extract_measurements') }}"
+      extractMeasurements: "{{ url_for('iws.extract_measurements') }}",
+      extractUpload: "{{ url_for('iws.extract_upload') }}"
     };
 
     let currentDealId = null;
@@ -203,8 +211,8 @@
       const html = deals
         .map(d => `
           <button type="button" class="deal-btn" data-deal-id="${d.id}">
-            <strong>${d.name}</strong><br>
-            <small>${d.city || ""}, ${d.stage || ""}</small>
+            <strong>${d.title || d.name || ""}</strong><br>
+            <small>${d.stage || ""}</small>
           </button>
         `)
         .join("");
@@ -278,6 +286,17 @@
       });
     }
 
+    function handleExtractResponse(d, statusEl) {
+      if (d.ok) {
+        autoPopulateFields(d);
+        statusEl.textContent = "Measurements extracted and form populated!";
+        statusEl.className = "extract-status success";
+      } else {
+        statusEl.textContent = "Error: " + (d.error || "Unknown error");
+        statusEl.className = "extract-status error";
+      }
+    }
+
     function extractMeasurements() {
       const fileId = document.getElementById("roofMeasurementFile").value;
       if (!fileId) {
@@ -289,6 +308,7 @@
       const btn = document.getElementById("extractMeasurementsBtn");
       
       statusEl.textContent = "Extracting measurements...";
+      statusEl.className = "extract-status";
       btn.disabled = true;
 
       fetch(IWS.extractMeasurements, {
@@ -297,22 +317,42 @@
         body: JSON.stringify({ file_id: fileId })
       })
         .then(r => r.json())
-        .then(d => {
-          if (d.ok) {
-            autoPopulateFields(d);
-            statusEl.textContent = "Measurements extracted and form populated!";
-            statusEl.className = "extract-status success";
-          } else {
-            statusEl.textContent = "Error: " + (d.error || "Unknown error");
-            statusEl.className = "extract-status error";
-          }
-        })
+        .then(d => handleExtractResponse(d, statusEl))
         .catch(e => {
           statusEl.textContent = "Fetch error: " + e.message;
           statusEl.className = "extract-status error";
         })
         .finally(() => {
           btn.disabled = !document.getElementById("roofMeasurementFile").value;
+        });
+    }
+
+    function extractUpload() {
+      const input = document.getElementById("uploadPdf");
+      if (!input.files || !input.files.length) {
+        alert("Please choose a PDF file first");
+        return;
+      }
+
+      const statusEl = document.getElementById("extractStatus");
+      const btn = document.getElementById("extractUploadBtn");
+
+      statusEl.textContent = "Extracting measurements from uploaded PDF...";
+      statusEl.className = "extract-status";
+      btn.disabled = true;
+
+      const fd = new FormData();
+      fd.append("pdf", input.files[0]);
+
+      fetch(IWS.extractUpload, { method: "POST", body: fd })
+        .then(r => r.json())
+        .then(d => handleExtractResponse(d, statusEl))
+        .catch(e => {
+          statusEl.textContent = "Fetch error: " + e.message;
+          statusEl.className = "extract-status error";
+        })
+        .finally(() => {
+          btn.disabled = !(input.files && input.files.length);
         });
     }
 
@@ -342,6 +382,8 @@
       const crmQuery = document.getElementById("crmQuery");
       const extractBtn = document.getElementById("extractMeasurementsBtn");
       const fileSelect = document.getElementById("roofMeasurementFile");
+      const uploadInput = document.getElementById("uploadPdf");
+      const uploadBtn = document.getElementById("extractUploadBtn");
 
       if (crmBtn) crmBtn.addEventListener("click", crmSearch);
       if (crmQuery) {
@@ -350,6 +392,14 @@
         });
       }
       if (extractBtn) extractBtn.addEventListener("click", extractMeasurements);
+      if (uploadBtn) uploadBtn.addEventListener("click", extractUpload);
+      if (uploadInput) {
+        uploadInput.addEventListener("change", () => {
+          uploadBtn.disabled = !(uploadInput.files && uploadInput.files.length);
+          document.getElementById("extractStatus").textContent = "";
+          document.getElementById("extractStatus").className = "extract-status";
+        });
+      }
       if (fileSelect) {
         fileSelect.addEventListener("change", () => {
           document.getElementById("extractMeasurementsBtn").disabled = !fileSelect.value;
